@@ -4,10 +4,10 @@ const execa = require('execa');
 
 async function checkMxcli() {
   try {
-    const res = await execa('mx', ['--version']);
+    const res = await execa('mxcli', ['--version']);
     return { ok: true, version: res.stdout.trim() };
   } catch (err) {
-    return { ok: false, message: 'mx CLI not found. Install mx (mxcli). See https://docs.mendix.com/refguide/mx-command-line-tool/' };
+    return { ok: false, message: 'mxcli not found. Install mxcli. See https://docs.mendix.com/refguide/mx-command-line-tool/' };
   }
 }
 

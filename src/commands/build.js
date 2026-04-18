@@ -27,13 +27,13 @@ module.exports = async function build(clientPort, postgresPort) {
       process.exit(1);
     }
 
-    // run mx docker build -p <mpr>
-    const spinBuild = ora('Running mx docker build...').start();
+    // run mxcli docker build -p <mpr>
+    const spinBuild = ora('Running mxcli docker build...').start();
     try {
-      await execa('mx', ['docker', 'build', '-p', mpr.file]);
-      spinBuild.succeed('mx docker build completed');
+      await execa('mxcli', ['docker', 'build', '-p', mpr.file]);
+      spinBuild.succeed('mxcli docker build completed');
     } catch (err) {
-      spinBuild.fail('mx docker build failed');
+      spinBuild.fail('mxcli docker build failed');
       logger.error(String(err));
       process.exit(1);
     }
