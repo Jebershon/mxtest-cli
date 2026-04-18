@@ -60,33 +60,3 @@ module.exports = async function init() {
     process.exit(1);
   }
 };
-const fs = require('fs-extra');
-const path = require('path');
-const chalk = require('chalk');
-
-module.exports = async () => {
-  const testDir = path.join(process.cwd(), 'tests');
-
-  if (fs.existsSync(testDir)) {
-    console.log(chalk.yellow('Tests folder already exists'));
-    return;
-  }
-
-  await fs.mkdir(testDir);
-
-  const sampleTest = `
-import { test, expect } from '@playwright/test';
-
-test('App loads', async ({ page }) => {
-  await page.goto('http://localhost:8080');
-  await expect(page).toHaveTitle(/Mendix/i);
-});
-`;
-
-  await fs.writeFile(
-    path.join(testDir, 'sample.spec.js'),
-    sampleTest
-  );
-
-  console.log(chalk.green('✔ Initialized tests folder'));
-};
