@@ -1,0 +1,13 @@
+{
+  "version": "1",
+  "testDir": "./tests",
+  "appUrl": "http://localhost:8080",
+  "clientPort": 8080,
+  "postgresPort": 5432,
+  "mprFile": null,
+  "dockerDir": ".docker",
+  "reportDir": "./test-results",
+  "waitTimeout": 120,
+  "waitRetries": 30,
+  "waitDelay": 2000
+}
