@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const ora = require('ora');
-const { execa } = require('execa');
+const execa = require('execa');
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const reportGenerator = require('../utils/reportGenerator');

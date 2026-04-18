@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs-extra');
-const { execa } = require('execa');
+const execa = require('execa');
 
 async function checkMxcli() {
   try {

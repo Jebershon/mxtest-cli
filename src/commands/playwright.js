@@ -1,4 +1,4 @@
-const { execa } = require('execa');
+const execa = require('execa');
 const logger = require('../utils/logger');
 
 module.exports = async function playwrightCmd(args) {
