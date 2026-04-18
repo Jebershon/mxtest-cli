@@ -1,7 +1,7 @@
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 
-const ALLOWED = ['testDir', 'appUrl', 'clientPort', 'postgresPort', 'waitTimeout'];
+const ALLOWED = ['testDir', 'appUrl', 'clientPort', 'postgresPort', 'waitTimeout', 'image'];
 
 module.exports = async function config(action, key, value) {
   try {
@@ -23,7 +23,7 @@ module.exports = async function config(action, key, value) {
       return;
     }
 
-    logger.error('Unknown config action. Use `show` or `set <key> <value>`');
+  logger.error('Unknown config action. Use `show` or `set <key> <value>`');
     process.exit(1);
   } catch (err) {
     logger.error('Config failed: ' + String(err));

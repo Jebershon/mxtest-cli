@@ -1,143 +1,131 @@
-const execa = require('execa');
-const fs = require('fs-extra');
 const path = require('path');
-const chalk = require('chalk');
+const execa = require('execa');
 const ora = require('ora');
-const axios = require('axios');
+const fs = require('fs-extra');
+const logger = require('../utils/logger');
+const configManager = require('../utils/configManager');
+const waitForApp = require('../utils/waitForApp');
 
-const APP_URL = 'http://localhost:8080';
-
-module.exports = async (options = {}) => {
-  const spinner = ora();
-
+module.exports = async function run(opts = {}) {
   try {
-    // 🔹 1. Validate mxcli
-    spinner.start('Checking mxcli...');
-    await execa('mxcli', ['--version']);
-    spinner.succeed('mxcli found');
+    const cfg = await configManager.readConfig();
+    const dockerDir = path.join(process.cwd(), cfg.dockerDir || '.docker');
 
-    // 🔹 2. Validate Docker
-    spinner.start('Checking Docker...');
-    await execa('docker', ['--version']);
-    spinner.succeed('Docker found');
-
-    // 🔹 3. Validate Mendix project
-    spinner.start('Checking Mendix project...');
-    const files = fs.readdirSync(process.cwd());
-    const mprFile = files.find(f => f.endsWith('.mpr'));
-
-    if (!mprFile) {
-      throw new Error('No .mpr file found. Run inside Mendix project folder.');
-    }
-    spinner.succeed(`Found ${mprFile}`);
-
-    // 🔹 4. Build Docker image
-    spinner.start('Building Docker image (mxcli)...');
-    await execa('mxcli', ['docker', 'build', '-p', mprFile], {
-      stdio: 'inherit'
-    });
-    spinner.succeed('Docker image built');
-
-    const dockerDir = path.join(process.cwd(), '.docker');
-
-    if (!fs.existsSync(dockerDir)) {
-      throw new Error('.docker folder not found after build.');
-    }
-
-    // 🔹 5. Create .env if not exists
+    // For run: do not rebuild. Use existing .docker artifacts (or generate docker-compose/.env from templates) and start compose.
+    const composePath = path.join(dockerDir, 'docker-compose.yml');
     const envPath = path.join(dockerDir, '.env');
 
-    if (!fs.existsSync(envPath)) {
-      spinner.start('Creating .env file...');
-      const envContent = `
-MXRUNTIME_Port=8080
-MXRUNTIME_ApplicationRootUrl=${APP_URL}
-`;
-      await fs.writeFile(envPath, envContent.trim());
-      spinner.succeed('.env created');
-    } else {
-      spinner.info('.env already exists (skipped)');
+    // Ensure .docker exists
+    await fs.ensureDir(dockerDir);
+
+    // Require local build artifacts. `mxtest run` is intended to consume the
+    // build output in `.docker/build`. If that folder doesn't exist, abort
+    // and instruct the user to run the build step. No image handling or
+    // interactive prompts are performed here.
+    const buildDir = path.join(dockerDir, 'build');
+    const hasBuild = await fs.pathExists(buildDir);
+    if (!hasBuild) {
+      logger.error('Cannot run: no Docker build artifacts found.');
+      logger.info('Run `mxtest build` or `mxtest run-build` to generate Docker artifacts.');
+      process.exit(1);
     }
 
-    // 🔹 6. Create docker-compose.yml if not exists
-    const yamlPath = path.join(dockerDir, 'docker-compose.yml');
-
-    if (!fs.existsSync(yamlPath)) {
-      spinner.start('Creating docker-compose.yml...');
-
-      const yamlContent = `
-version: '3.8'
-services:
-  mendix-app:
-    image: mendix-app
-    ports:
-      - "8080:8080"
-    env_file:
-      - .env
-`;
-
-      await fs.writeFile(yamlPath, yamlContent.trim());
-      spinner.succeed('docker-compose.yml created');
-    } else {
-      spinner.info('docker-compose.yml already exists (skipped)');
-    }
-
-    // 🔹 7. Start Docker container
-    spinner.start('Starting Docker container...');
-    await execa('docker', ['compose', 'up', '-d'], {
-      cwd: dockerDir,
-      stdio: 'inherit'
-    });
-    spinner.succeed('Container started');
-
-    // 🔹 8. Wait for app readiness
-    spinner.start('Waiting for app to be ready...');
-    await waitForApp(APP_URL);
-    spinner.succeed('App is ready');
-
-    // 🔹 9. Run Playwright tests
-    spinner.start('Running Playwright tests...');
-    await execa('npx', ['playwright', 'test'], {
-      stdio: 'inherit'
-    });
-    spinner.succeed('Tests completed');
-
-  } catch (err) {
-    spinner.fail(chalk.red(err.message));
-  } finally {
-    // 🔹 10. Cleanup (unless keep flag)
-    if (!options.keepDocker) {
-      const dockerDir = path.join(process.cwd(), '.docker');
-
-      console.log(chalk.yellow('\nStopping Docker container...'));
-
+    // Ensure .env exists or write one from template using current config
+    if (!await fs.pathExists(envPath)) {
       try {
-        await execa('docker', ['compose', 'down'], {
-          cwd: dockerDir,
-          stdio: 'inherit'
-        });
-        console.log(chalk.green('Docker stopped'));
-      } catch (e) {
-        console.log(chalk.red('Failed to stop Docker'));
+        const template = await fs.readFile(path.join(__dirname, '..', 'templates', '.env.txt'), 'utf8');
+        const content = template.replace(/{{CLIENT_PORT}}/g, String(cfg.clientPort || 8080)).replace(/{{POSTGRES_PORT}}/g, String(cfg.postgresPort || 5432)).replace(/{{APP_URL}}/g, String(cfg.appUrl || 'http://localhost:8080'));
+        await fs.writeFile(envPath, content, 'utf8');
+        logger.success('Wrote .env into .docker');
+      } catch (err) {
+        logger.warn('Failed to write .env: ' + String(err));
       }
-    } else {
-      console.log(chalk.blue('Keeping Docker container running'));
     }
-  }
-};
 
+    // Do not overwrite an existing docker-compose.yml generated by the
+    // build process. If the builder didn't create one, that's an error.
+    if (!await fs.pathExists(composePath)) {
+      logger.error('No docker-compose.yml found in .docker. Run `mxtest build` to generate it.');
+      process.exit(1);
+    }
 
+    // If we have local build artifacts and a Dockerfile, but the compose
+    // references an `image:` (causing Docker to try pulling), rewrite the
+    // compose file to prefer a local build context so `docker compose up`
+    // does not attempt to pull a remote image.
+    const dockerfilePath = path.join(buildDir, 'Dockerfile');
+    const hasDockerfile = await fs.pathExists(dockerfilePath);
+    if (hasBuild && hasDockerfile) {
+      try {
+        let composeText = await fs.readFile(composePath, 'utf8');
+        // If compose already contains a `build:` block, assume it's correct.
+        if (!/^[ \t]*build:/im.test(composeText) && /^[ \t]*image:/im.test(composeText)) {
+          // Replace the first image: line with a build block while preserving indentation
+          composeText = composeText.replace(/(^[ \t]*)(image:\s*([^\r\n]+))/im, (m, indent, whole, img) => {
+            const buildBlock = `${indent}build:\n${indent}  context: ./build\n${indent}  dockerfile: Dockerfile\n${indent}image: ${img.trim().replace(/^image:\s*/i, '')}`;
+            return buildBlock;
+          });
+          await fs.writeFile(composePath, composeText, 'utf8');
+          logger.info('Updated docker-compose.yml to prefer local build context (./build) to avoid image pulls');
+        }
+      } catch (err) {
+        logger.warn('Failed to rewrite docker-compose to use local build: ' + String(err));
+      }
+    }
 
-// 🔥 Wait for Mendix app to be ready
-async function waitForApp(url, retries = 30, delay = 2000) {
-  for (let i = 0; i < retries; i++) {
+    // Now start docker compose using local build artifacts. Steps:
+    // 1) cd into .docker
+    // 2) run `docker compose up -d`
+    // 3) if that fails with a port/bind conflict, run `docker compose down` and
+    //    then `docker compose up -d` again
     try {
-      await axios.get(url);
+      await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
+      logger.success('Docker compose started');
+    } catch (err) {
+      const stderr = (err.stderr) ? String(err.stderr) : '';
+      const stdout = (err.stdout) ? String(err.stdout) : '';
+      const combined = (stderr + '\n' + stdout).toLowerCase();
+      const portConflictRegex = /port is already allocated|address already in use|bind for .* failed|already in use/i;
+      if (portConflictRegex.test(combined)) {
+        logger.warn('Port conflict detected. Running `docker compose down` and retrying `docker compose up -d`.');
+        try {
+          await execa('docker', ['compose', 'down'], { cwd: dockerDir, stdio: 'inherit' });
+        } catch (downErr) {
+          logger.warn('`docker compose down` failed: ' + String(downErr));
+        }
+        try {
+          await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
+          logger.success('Docker compose started after bringing the stack down');
+        } catch (secondErr) {
+          if (secondErr.stderr) logger.error('docker compose stderr:\n' + String(secondErr.stderr));
+          if (secondErr.stdout) logger.info('docker compose stdout:\n' + String(secondErr.stdout));
+          logger.error('docker compose failed after retry');
+          process.exit(1);
+        }
+      } else {
+        if (err.stderr) logger.error('docker compose stderr:\n' + String(err.stderr));
+        if (err.stdout) logger.info('docker compose stdout:\n' + String(err.stdout));
+        logger.error('docker compose failed');
+        process.exit(1);
+      }
+    }
+
+    const appUrl = cfg.appUrl || 'http://localhost:8080';
+    const spinWait = ora(`Waiting for app at ${appUrl}`).start();
+    try {
+      await waitForApp(appUrl, cfg.waitRetries || 30, cfg.waitDelay || 2000, cfg.waitTimeout || 120);
+      spinWait.succeed('App is available');
+      logger.box(`Application available at ${appUrl}`, { borderColor: 'green' });
+      // also print URL
+      logger.success(appUrl);
       return;
     } catch (err) {
-      await new Promise(res => setTimeout(res, delay));
+      spinWait.fail('App did not become available');
+      logger.error(String(err) + '\nTry running `mxtest logs --follow` to debug');
+      process.exit(1);
     }
+  } catch (err) {
+    logger.error('Run failed: ' + String(err));
+    process.exit(1);
   }
-
-  throw new Error('App did not become ready in time');
-}
+};

@@ -20,8 +20,20 @@ program
 
 program
   .command('build [clientPort] [postgresPort]')
-  .description('Build Mendix docker images and start containers')
+  .description('Build Mendix docker images and prepare docker artifacts (.env, docker-compose)')
   .action(require('../src/commands/build'));
+
+program
+  .command('run')
+  .description('Run the prepared Docker compose inside the .docker directory and wait for the app')
+  .option('--no-rebuild', 'Skip running mxtest build before composing')
+  .action((opts) => require('../src/commands/run')(opts));
+
+program
+  .command('run-build')
+  .description('Force rebuild the app, recreate .docker, and run docker compose (down then up)')
+  .option('--no-wait', 'Do not wait for the application URL to become available')
+  .action(() => require('../src/commands/run-build')());
 
 program
   .command('test')
