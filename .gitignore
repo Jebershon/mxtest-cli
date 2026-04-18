@@ -1,0 +1,33 @@
+# Node modules
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env files
+.env
+.env.*.local
+
+# OS files
+.DS_Store
+
+# Editor dirs
+.vscode/
+.idea/
+
+# Build output
+dist/
+build/
+coverage/
+
+# Docker & runtime
+.docker/
+test-results/
+/test-results/
+
+# Misc
+*.log
+*.tgz
