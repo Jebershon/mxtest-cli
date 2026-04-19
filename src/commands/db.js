@@ -1,6 +1,7 @@
 const inquirer = require('inquirer');
 const logger = require('../utils/logger');
 const db = require('../utils/dbManager');
+const configManager = require('../utils/configManager');
 
 module.exports = async function dbCmd(action) {
   if (!action || action === 'help') {
@@ -9,12 +10,21 @@ module.exports = async function dbCmd(action) {
   }
 
   if (action === 'connect') {
+    const cfg = await configManager.readConfig();
+    const defaults = {
+      host: cfg.dbHost || 'localhost',
+      port: cfg.dbPort || 5432,
+      user: cfg.dbUser || 'postgres',
+      password: cfg.pgadminPassword || ''
+    };
+
+    // Prompt only for database name by default, other fields pre-filled from config
     const ans = await inquirer.prompt([
-      { name: 'host', message: 'Host:', default: 'localhost' },
-      { name: 'port', message: 'Port:', default: 5432 },
+      { name: 'host', message: 'Host:', default: defaults.host },
+      { name: 'port', message: 'Port:', default: defaults.port },
       { name: 'name', message: 'Database:' },
-      { name: 'user', message: 'User:', default: 'postgres' },
-      { name: 'password', message: 'Password:', type: 'password' }
+      { name: 'user', message: 'User:', default: defaults.user },
+      { name: 'password', message: 'Password:', type: 'password', default: defaults.password }
     ]);
 
     db.saveConfig({ mode: 'external', host: ans.host, port: Number(ans.port), name: ans.name, user: ans.user });

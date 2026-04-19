@@ -49,9 +49,32 @@ async function checkMprFile(providedPath) {
   }
 }
 
+async function checkPgClient() {
+  try {
+    // Check for pg_dump or psql availability
+    await execa('pg_dump', ['--version']);
+    await execa('psql', ['--version']);
+    return { ok: true, version: 'pg client available' };
+  } catch (err) {
+    return { ok: false, message: 'Postgres client not found (pg_dump/psql). Install PostgreSQL client tools or pgAdmin. See https://www.postgresql.org/download/ or https://www.pgadmin.org/download/' };
+  }
+}
+
+async function checkNodePgPackage() {
+  try {
+    // verify that the npm package 'pg' is installed and can be required
+    require('pg');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: "Node package 'pg' not installed. Run: npm install pg" };
+  }
+}
+
 module.exports = {
   checkMxcli,
   checkDocker,
   checkPlaywright,
   checkMprFile
+  ,checkPgClient
+  ,checkNodePgPackage
 };

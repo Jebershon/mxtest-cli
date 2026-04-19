@@ -4,16 +4,17 @@ const ora = require('ora');
 const logger = require('../utils/logger');
 const validator = require('../utils/validator');
 const configManager = require('../utils/configManager');
+const runDoctor = require('./doctor');
 
 module.exports = async function init() {
   try {
-    // run doctor checks
-    const mx = await validator.checkMxcli();
-    if (!mx.ok) {
-      logger.error('mxcli missing: ' + mx.message);
-      process.exit(1);
+    // Run full doctor to ensure required tools are present; when called from init we do not want doctor to exit the process
+    const ok = await runDoctor({ exitOnFailure: false });
+    if (!ok) {
+      logger.warn('Doctor reported missing dependencies; init will continue but some features may not work until dependencies are installed');
     }
 
+    // ensure .mpr and other checks are done by doctor; fetch mpr path
     const mpr = await validator.checkMprFile();
     if (!mpr.ok) {
       logger.error('No .mpr found: ' + mpr.message);
@@ -21,6 +22,21 @@ module.exports = async function init() {
     }
 
     const cfg = await configManager.readConfig();
+
+    // Persist static PGAdmin and DB defaults into mxtest config so later commands can assume them
+    const updates = {};
+    if (!cfg.pgadminUrl) updates.pgadminUrl = 'http://localhost:5050';
+    if (!cfg.pgadminUser) updates.pgadminUser = 'root';
+    if (!cfg.pgadminPassword) updates.pgadminPassword = 'root';
+    if (!cfg.dbHost) updates.dbHost = 'localhost';
+    if (!cfg.dbPort) updates.dbPort = cfg.postgresPort || 5432;
+    if (!cfg.dbUser) updates.dbUser = 'postgres';
+    if (Object.keys(updates).length > 0) {
+      await configManager.updateConfig(updates);
+      logger.success('Saved default DB and pgAdmin settings to mxtest.config.json');
+    } else {
+      logger.info('DB and pgAdmin settings already present in config');
+    }
 
     // ensure tests dir
     const testsDir = path.resolve(process.cwd(), cfg.testDir || './tests');
