@@ -13,7 +13,7 @@ This document is a practical playbook for autonomous agents (or human developers
 - Use CommonJS (require/module.exports) to match the repo style.
 - Prefer small patches that include tests when behavior changes.
 - Do not commit secrets from `.mxtest` — `.mxtest` should be in `.gitignore` (verify if present).
-- When calling external binaries, capture and stream output via existing `logger` helpers.
+- When calling external binaries, capture and stream output via existing `logger` helpers. Prefer using the system Postgres client tools (`pg_dump`, `pg_restore`/`psql`) for snapshot operations rather than embedding DB clients in Node.
 
 ## Quick checklist for any PR/patch
 
@@ -21,7 +21,8 @@ This document is a practical playbook for autonomous agents (or human developers
 2. Run `mxtest doctor` to ensure dependencies are available.
 3. Try `mxtest build` and `mxtest run` in a Mendix app with a simple `.mpr` to validate end-to-end.
 4. Run `mxtest test` (Playwright) and confirm an HTML report is produced and served.
-5. If changing compose or Docker logic, run in a disposable docker environment (or CI) and verify no unexpected images are pulled.
+5. Verify snapshot save/restore flows (`mxtest snapshot save|list|restore`, `mxtest db restore-backup`) work when the DB runs inside Docker Compose and for external DBs.
+6. If changing compose or Docker logic, run in a disposable docker environment (or CI) and verify no unexpected images are pulled.
 
 ## Common tasks and where to start
 
@@ -29,12 +30,13 @@ This document is a practical playbook for autonomous agents (or human developers
   - Add `src/commands/mycmd.js` exporting a function and register it in `bin/index.js`.
   - Use existing utils for prompts and logging.
 
-- Improve DB snapshot reliability
-  - Inspect `src/utils/snapshotManager.js` and prefer streaming `pg_dump`/`psql` output where possible.
+ - Improve DB snapshot reliability
+  - Inspect `src/utils/snapshotManager.js`. The implementation should prefer native host `pg_dump`/`psql`, then `docker compose exec` streaming with environment injection, then `docker run` as a last-resort fallback.
+  - Ensure snapshots are saved as `.backup` (default) and that the single overwritten plain-SQL safety copy in `.mxtest/snapshots/sql/` is produced.
   - Add checksum validations for saved snapshots.
 
-- Add non-interactive CI flags
-  - Commands like `mxtest db connect --yes --host ...` should exist for CI runs.
+ - Add non-interactive CI flags
+  - Commands like `mxtest db connect --yes --host ...` and `mxtest db restore-backup --yes` should exist for CI runs to skip interactive prompts.
 
 - Add tests
   - Create lightweight unit tests using mocha/jest for utils (avoid integration tests that require Docker unless running in specialized CI).

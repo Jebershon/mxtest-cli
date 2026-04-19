@@ -10,13 +10,13 @@ async function readConfig() {
       // create default
       const def = {
         version: '1',
-        testDir: './tests',
+        testDir: '.mxtest/tests',
         appUrl: 'http://localhost:8080',
         clientPort: 8080,
         postgresPort: 5432,
         mprFile: null,
         dockerDir: '.docker',
-        reportDir: './test-results',
+        reportDir: '.mxtest/test-results',
         waitTimeout: 120,
         waitRetries: 30,
         waitDelay: 2000

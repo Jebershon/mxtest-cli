@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs-extra');
-const ora = require('ora');
+const ui = require('../utils/ui');
 const execa = require('execa');
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
@@ -13,6 +13,7 @@ module.exports = async function testCmd(options = {}) {
     // commander passes options object; sometimes first arg is options
     const opts = (typeof options === 'object' && options) || {};
     const cfg = await configManager.readConfig();
+    ui.banner('mxtest — test', 'Running Playwright tests and generating report');
 
     const testDir = path.resolve(process.cwd(), opts.path || cfg.testDir || './tests');
     const url = opts.url || cfg.appUrl;
@@ -34,7 +35,7 @@ module.exports = async function testCmd(options = {}) {
     }
 
     // quick wait
-    const spinWait = ora(`Checking application at ${url}`).start();
+    const spinWait = ui.startSpinner(`Checking application at ${url}`);
     try {
       await waitForApp(url, Math.min(5, cfg.waitRetries || 5), cfg.waitDelay || 2000, 20);
       spinWait.succeed('Application reachable');
@@ -49,7 +50,7 @@ module.exports = async function testCmd(options = {}) {
     if (opts.browser) args.push('--project=' + opts.browser);
     if (opts.retry) args.push('--repeat-each=' + String(opts.retry));
 
-    const spin = ora('Running Playwright tests').start();
+    const spin = ui.startSpinner('Running Playwright tests');
     let res;
     try {
       res = await execa('npx', args);

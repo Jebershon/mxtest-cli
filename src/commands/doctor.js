@@ -1,5 +1,5 @@
-const ora = require('ora');
 const boxen = require('boxen');
+const ui = require('../utils/ui');
 const inquirer = require('inquirer');
 const validator = require('../utils/validator');
 const logger = require('../utils/logger');
@@ -20,7 +20,7 @@ module.exports = async function doctor(opts = {}) {
     let allOk = true;
 
     for (const c of checks) {
-      const spinner = ora(`Checking ${c.name}...`).start();
+      const spinner = ui.startSpinner(`Checking ${c.name}...`);
       try {
         let res = await c.fn();
         if (res.ok) {
@@ -68,7 +68,7 @@ module.exports = async function doctor(opts = {}) {
             break;
           }
 
-          const spin = ora(`Re-checking ${c.name}...`).start();
+          const spin = ui.startSpinner(`Re-checking ${c.name}...`);
           try {
             res = await c.fn();
             if (res.ok) {

@@ -1,14 +1,15 @@
 const path = require('path');
 const execa = require('execa');
-const ora = require('ora');
 const fs = require('fs-extra');
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const waitForApp = require('../utils/waitForApp');
+const orchestrator = require('../utils/snapshotOrchestrator');
 
 module.exports = async function run(opts = {}) {
   try {
     const cfg = await configManager.readConfig();
+    const ui = require('../utils/ui');
     const dockerDir = path.join(process.cwd(), cfg.dockerDir || '.docker');
 
     // For run: do not rebuild. Use existing .docker artifacts (or generate docker-compose/.env from templates) and start compose.
@@ -73,45 +74,122 @@ module.exports = async function run(opts = {}) {
       }
     }
 
-    // Now start docker compose using local build artifacts. Steps:
-    // 1) cd into .docker
-    // 2) run `docker compose up -d`
-    // 3) if that fails with a port/bind conflict, run `docker compose down` and
-    //    then `docker compose up -d` again
+    // Now start docker compose using local build artifacts. If a previous
+    // stack is running from this .docker, stop and clear it first so we start
+    // cleanly with the existing build artifacts and can restore snapshot data.
     try {
-      await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
-      logger.success('Docker compose started');
-    } catch (err) {
-      const stderr = (err.stderr) ? String(err.stderr) : '';
-      const stdout = (err.stdout) ? String(err.stdout) : '';
-      const combined = (stderr + '\n' + stdout).toLowerCase();
-      const portConflictRegex = /port is already allocated|address already in use|bind for .* failed|already in use/i;
-      if (portConflictRegex.test(combined)) {
-        logger.warn('Port conflict detected. Running `docker compose down` and retrying `docker compose up -d`.');
+      let containersRunning = false;
+      try {
+        const ps = await execa('docker', ['compose', '-f', composePath, 'ps', '-q']);
+        const out = (ps && ps.stdout) ? String(ps.stdout).trim() : '';
+        containersRunning = out.length > 0;
+      } catch (e) {
+        containersRunning = false;
+      }
+
+      if (containersRunning) {
+        logger.info('Detected running compose stack — stopping and clearing existing containers (down -v)');
         try {
-          await execa('docker', ['compose', 'down'], { cwd: dockerDir, stdio: 'inherit' });
-        } catch (downErr) {
-          logger.warn('`docker compose down` failed: ' + String(downErr));
+          await execa('docker', ['compose', 'down', '-v'], { cwd: dockerDir, stdio: 'inherit' });
+          logger.success('Previous compose stack stopped and cleared');
+        } catch (e) {
+          logger.warn('Failed to fully stop previous compose stack — continuing with up (best-effort)');
         }
-        try {
-          await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
-          logger.success('Docker compose started after bringing the stack down');
-        } catch (secondErr) {
-          if (secondErr.stderr) logger.error('docker compose stderr:\n' + String(secondErr.stderr));
-          if (secondErr.stdout) logger.info('docker compose stdout:\n' + String(secondErr.stdout));
-          logger.error('docker compose failed after retry');
+      }
+
+      try {
+        ui.banner('mxtest — run', 'Start the stack using local .docker artifacts');
+        await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
+        logger.success('Docker compose started');
+      } catch (err) {
+        const stderr = (err.stderr) ? String(err.stderr) : '';
+        const stdout = (err.stdout) ? String(err.stdout) : '';
+        const combined = (stderr + '\n' + stdout).toLowerCase();
+        const portConflictRegex = /port is already allocated|address already in use|bind for .* failed|already in use/i;
+        if (portConflictRegex.test(combined)) {
+          logger.warn('Port conflict detected. Running `docker compose down` and retrying `docker compose up -d`.');
+          try {
+            await execa('docker', ['compose', 'down'], { cwd: dockerDir, stdio: 'inherit' });
+          } catch (downErr) {
+            logger.warn('`docker compose down` failed: ' + String(downErr));
+          }
+          try {
+            await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
+            logger.success('Docker compose started after bringing the stack down');
+          } catch (secondErr) {
+            if (secondErr.stderr) logger.error('docker compose stderr:\n' + String(secondErr.stderr));
+            if (secondErr.stdout) logger.info('docker compose stdout:\n' + String(secondErr.stdout));
+            logger.error('docker compose failed after retry');
+            process.exit(1);
+          }
+        } else {
+          if (err.stderr) logger.error('docker compose stderr:\n' + String(err.stderr));
+          if (err.stdout) logger.info('docker compose stdout:\n' + String(err.stdout));
+          logger.error('docker compose failed');
           process.exit(1);
         }
-      } else {
-        if (err.stderr) logger.error('docker compose stderr:\n' + String(err.stderr));
-        if (err.stdout) logger.info('docker compose stdout:\n' + String(err.stdout));
-        logger.error('docker compose failed');
-        process.exit(1);
       }
+    } catch (err) {
+      logger.error('Failed to start docker compose: ' + String(err));
+      process.exit(1);
+    }
+
+    // After compose is started, if project uses internal DB and a baseline
+    // snapshot exists in .mxtest/snapshots, restore it into the DB so the
+    // newly started containers have the expected data before tests or usage.
+    try {
+      const db = require('../utils/dbManager');
+      const snapshot = require('../utils/snapshotManager');
+      const dbCfg = db.readConfig().db || {};
+      const isInternal = !dbCfg.mode || dbCfg.mode === 'internal';
+      if (isInternal) {
+        try {
+          const snaps = snapshot.list();
+          const baselineFile = snaps.find(s => require('path').parse(s).name === 'baseline');
+          if (baselineFile) {
+            // detect DB service name from compose and wait for DB readiness
+            try {
+              const ps = await execa('docker', ['compose', '-f', composePath, 'ps', '--services']);
+              const services = (ps.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+              const candidate = services.find(s => /postgres|postgresql|db/i.test(s)) || services[0];
+              if (candidate) {
+                const waitMs = 60 * 1000; // wait up to 60s for DB
+                const interval = 1000;
+                const start = Date.now();
+                let ready = false;
+                while (Date.now() - start < waitMs) {
+                  try {
+                    // pg_isready returns 0 when ready; use exec in container
+                    await execa('docker', ['compose', '-f', composePath, 'exec', '-T', candidate, 'pg_isready', '-q'], { timeout: 5000 });
+                    ready = true;
+                    break;
+                  } catch (e) {
+                    await new Promise(r => setTimeout(r, interval));
+                  }
+                }
+                if (!ready) logger.warn('DB did not become ready within timeout; attempting restore anyway');
+              }
+            } catch (e) {
+              // ignore detection errors and attempt restore anyway
+            }
+
+            try {
+              await orchestrator.restoreBaselineIfPresent(composePath, dockerDir);
+            } catch (err) {
+              logger.warn('Baseline restore failed: ' + String(err));
+            }
+          }
+        } catch (e) {
+          logger.warn('Baseline restore check failed: ' + String(e));
+        }
+      }
+    } catch (e) {
+      // ignore restore errors here — we'll still wait for the app
+      logger.warn('Post-start baseline restore skipped: ' + String(e));
     }
 
     const appUrl = cfg.appUrl || 'http://localhost:8080';
-    const spinWait = ora(`Waiting for app at ${appUrl}`).start();
+    const spinWait = ui.startSpinner(`Waiting for app at ${appUrl}`);
     try {
       await waitForApp(appUrl, cfg.waitRetries || 30, cfg.waitDelay || 2000, cfg.waitTimeout || 120);
       spinWait.succeed('App is available');

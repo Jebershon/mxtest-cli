@@ -1,9 +1,10 @@
 const fs = require('fs-extra');
 const path = require('path');
-const ora = require('ora');
+const ui = require('../utils/ui');
 const logger = require('../utils/logger');
 const validator = require('../utils/validator');
 const configManager = require('../utils/configManager');
+const dbManager = require('../utils/dbManager');
 const runDoctor = require('./doctor');
 
 module.exports = async function init() {
@@ -23,6 +24,14 @@ module.exports = async function init() {
 
     const cfg = await configManager.readConfig();
 
+    // Ensure .mxtest config exists and defaults to internal DB mode
+    try {
+      const mcfg = dbManager.readConfig();
+      logger.info(`Ensured .mxtest config (DB mode: ${mcfg.db && mcfg.db.mode ? mcfg.db.mode : 'internal'})`);
+    } catch (e) {
+      logger.warn('Could not create .mxtest config: ' + String(e));
+    }
+
     // Persist static PGAdmin and DB defaults into mxtest config so later commands can assume them
     const updates = {};
     if (!cfg.pgadminUrl) updates.pgadminUrl = 'http://localhost:5050';
@@ -38,22 +47,33 @@ module.exports = async function init() {
       logger.info('DB and pgAdmin settings already present in config');
     }
 
-    // ensure tests dir
-    const testsDir = path.resolve(process.cwd(), cfg.testDir || './tests');
+    // create tests dir inside .mxtest by default to avoid touching project files
+    const defaultTestsRel = '.mxtest/tests';
+    const testsDirRel = cfg.testDir || defaultTestsRel;
+    const testsDir = path.resolve(process.cwd(), testsDirRel);
     if (!await fs.pathExists(testsDir)) {
-      const spin = ora(`Creating tests directory at ${testsDir}`).start();
+      const spin = ui.startSpinner(`Creating tests directory at ${testsDir}`);
       await fs.mkdirp(testsDir);
       spin.succeed('Created tests directory');
       logger.success(`Created ${testsDir}`);
+      // if user had no testDir in config, persist the new location
+      if (!cfg.testDir) {
+        try {
+          await configManager.updateConfig({ testDir: defaultTestsRel });
+          logger.info(`Saved testDir = ${defaultTestsRel} to mxtest.config.json`);
+        } catch (e) {
+          logger.warn('Failed to persist testDir to config: ' + String(e));
+        }
+      }
     } else {
       logger.info(`Tests directory already exists: ${testsDir}`);
     }
 
-    // create sample.spec.js
+    // create sample.spec.js inside testsDir
     const sampleSrc = path.join(__dirname, '..', 'templates', 'sample.spec.js.txt');
     const sampleDest = path.join(testsDir, 'sample.spec.js');
     if (!await fs.pathExists(sampleDest)) {
-      const spin = ora('Creating sample.spec.js').start();
+      const spin = ui.startSpinner('Creating sample.spec.js');
       const content = await fs.readFile(sampleSrc, 'utf8');
       await fs.writeFile(sampleDest, content, 'utf8');
       spin.succeed('Created sample.spec.js');

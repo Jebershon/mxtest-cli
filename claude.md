@@ -4,7 +4,7 @@ This document explains the mxtest-cli project: its responsibilities, key flows, 
 
 ## Purpose
 
-mxtest-cli is a command-line tool that automates building Mendix applications (via `mxcli`), preparing Docker artifacts, starting a local stack, and running Playwright tests. It includes utilities for managing DB connections, snapshots, and test reporting.
+mxtest-cli is a command-line tool that automates building Mendix applications (via `mxcli`), preparing Docker artifacts, starting a local stack, and running Playwright tests. It includes utilities for managing DB connections, snapshots, and test reporting. Snapshot tooling is designed to work when Postgres runs inside Docker Compose as well as with external DBs.
 
 The project is intentionally small, CommonJS-based, and designed to be used locally or in CI.
 
@@ -31,12 +31,14 @@ The project is intentionally small, CommonJS-based, and designed to be used loca
    - `mxtest run-build` attempts to stop any existing stack, remove `.docker`, run `mxtest build`, optionally rewrite compose to prefer local `build:` context when Dockerfile is present, runs `docker compose build`, then `docker compose up -d`. It also supports external DB wiring (see DB section).
 
 5. Tests
-   - `mxtest test` runs Playwright via `npx playwright test` with `--reporter=json`. The JSON output is parsed, saved under `test-results/<ts>/`, and converted to an HTML report. `npx playwright show-report` is called to serve the report. The report generator writes `report.html` and `index.html` to avoid 404s.
+   - `mxtest test` runs Playwright via `npx playwright test` with `--reporter=json`. The JSON output is parsed, saved under `.mxtest/test-results/<ts>/`, and converted to an HTML report. `npx playwright show-report` is called to serve the report. The report generator writes `report.html` and `index.html` to avoid 404s. `mxtest test` supports `--snapshot <name>` to auto-restore a snapshot before running tests.
 
 6. DB & snapshots
    - `.mxtest/config.json` stores DB mode and connection info. `.mxtest/.env` stores DB password.
    - `mxtest db connect` prompts the user and saves credentials. `mxtest db status` checks connectivity.
-   - Snapshot functions (`mxtest snapshot save|list|restore`) use `pg_dump` and `psql` to manage SQL dumps in `.mxtest/snapshots/`.
+   - Snapshot functions use system Postgres client tools (`pg_dump`, `pg_restore`/`psql`) instead of a Node `pg` dependency. Snapshots are stored under `.mxtest/snapshots/` (canonical `.backup` files) and the tooling also maintains a single overwritten plain SQL safety copy at `.mxtest/snapshots/sql/<name>.sql`.
+   - The snapshot manager attempts, in order: native host `pg_dump`/`psql`, `docker compose exec` streaming with environment injection (preferred for containerized DB), and `docker run` with the official Postgres image as a fallback.
+   - `mxtest db restore-backup` is available as an interactive helper to import an external `.backup`/`.sql` file into the project snapshots and restore it.
    - When DB mode is `external`, `mxtest run-build` writes a temporary compose override under `.docker/` that injects the external DB connection into the Mendix service and scales local `db` down.
 
 ## Key files to inspect when making changes

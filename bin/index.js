@@ -2,6 +2,14 @@
 
 const { program } = require('commander');
 
+// Support a global quiet flag to keep logs short and simple
+program.option('-q, --quiet', 'Minimal output (quiet)');
+const logger = require('../src/utils/logger');
+// If user passed -q/--quiet, enable minimal logger early
+if (process.argv.includes('-q') || process.argv.includes('--quiet')) {
+  logger.setMinimal(true);
+}
+
 program
   .name('mxtest')
   .description('Mendix + Playwright Testing CLI')
@@ -21,7 +29,8 @@ program
 program
   .command('build [clientPort] [postgresPort]')
   .description('Build Mendix docker images and prepare docker artifacts (.env, docker-compose)')
-  .action(require('../src/commands/build'));
+  .option('--force', 'Force removal of existing .docker even if snapshot fails')
+  .action((clientPort, postgresPort, opts) => require('../src/commands/build')(clientPort, postgresPort, opts));
 
 program
   .command('run')
@@ -33,7 +42,8 @@ program
   .command('run-build')
   .description('Force rebuild the app, recreate .docker, and run docker compose (down then up)')
   .option('--no-wait', 'Do not wait for the application URL to become available')
-  .action(() => require('../src/commands/run-build')());
+  .option('--force', 'Force removal of existing .docker even if snapshot fails')
+  .action((opts) => require('../src/commands/run-build')(opts));
 
 program
   .command('test')
@@ -85,13 +95,14 @@ program
   .action(require('../src/commands/playwright'));
 
 program
-  .command('db [action]')
-  .description('Manage database connection (connect|status)')
-  .action((action) => require('../src/commands/db')(action));
+  .command('db [action] [arg]')
+  .description('Manage database connection (connect|status|restore-backup)')
+  .action((action, arg) => require('../src/commands/db')(action, arg));
 
 program
   .command('snapshot [action] [name]')
   .description('Manage DB snapshots (save|list|restore)')
-  .action((action, name) => require('../src/commands/snapshot')(action, name));
+  .option('--verbose', 'Print detailed diagnostics during snapshot operations')
+  .action((action, name, opts) => require('../src/commands/snapshot')(action, name, opts));
 
 program.parse();

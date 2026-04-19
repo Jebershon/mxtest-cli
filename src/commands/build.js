@@ -1,12 +1,15 @@
 const path = require('path');
 const fs = require('fs-extra');
-const ora = require('ora');
 const execa = require('execa');
 const logger = require('../utils/logger');
 const validator = require('../utils/validator');
 const configManager = require('../utils/configManager');
+const snapshot = require('../utils/snapshotManager');
+const dbManager = require('../utils/dbManager');
+const orchestrator = require('../utils/snapshotOrchestrator');
+const ui = require('../utils/ui');
 
-module.exports = async function build(clientPort, postgresPort) {
+module.exports = async function build(clientPort, postgresPort, opts = {}) {
     try {
         // validate
         const mx = await validator.checkMxcli();
@@ -33,24 +36,40 @@ module.exports = async function build(clientPort, postgresPort) {
         }
 
         // Show an ASCII banner to indicate a longer build is starting
-        logger.box(`mxtest — building Mendix package
-This may take several minutes. Sit back and relax!`, { borderColor: 'yellow' });
+        ui.banner('mxtest — building Mendix package', 'This may take a few minutes — grabbing coffee is optional.');
 
-        // If .docker exists from a previous run, remove it first so mxcli produces a fresh set
+        // If .docker exists from a previous run, optionally attempt to snapshot the DB
+        // (baseline) before removing it. The `run-build` flow takes the baseline
+        // snapshot and passes `opts.skipSnapshot` to avoid double attempts — only
+        // attempt snapshot here when not explicitly skipped.
         try {
+            let baselineSaved = false;
+            if (opts && opts.skipSnapshot) {
+                logger.info('Skipping baseline snapshot (already handled by parent command)');
+            } else {
+                baselineSaved = await orchestrator.saveBaselineIfNeeded(dockerDir, opts);
+            }
+
             if (await fs.pathExists(dockerDir)) {
-                logger.info('Removing existing .docker before running mxcli to ensure a fresh artifact set');
-                await fs.remove(dockerDir);
+                if (baselineSaved || (opts && opts.force)) {
+                    if (opts && opts.force && !baselineSaved) logger.warn('Force flag set — removing .docker despite snapshot failure');
+                    logger.info('Removing existing .docker before running mxcli to ensure a fresh artifact set');
+                    await fs.remove(dockerDir);
+                } else {
+                    logger.info('Skipping removal of existing .docker because baseline snapshot failed. Existing artifacts will be preserved. Use --force to override.');
+                }
             }
         } catch (err) {
-            logger.warn('Failed to remove existing .docker before build: ' + String(err));
+            logger.warn('Failed to handle existing .docker before build: ' + String(err));
         }
 
     // Run mxcli docker build -p <mpr> and stream output to the console while capturing it.
-    // We stream mxcli stdout/stderr directly; avoid additional progress output to prevent duplication.
+    // Show a short header and stream mxcli output; capture a tail summary for a friendly post-build summary.
     logger.info('Running mxcli docker build...');
+    logger.box('mxcli build — streaming output (tail shown after completion)');
         const { spawn } = require('child_process');
         let combined = '';
+        const startTime = Date.now();
         // (No ASCII loader) Stream mxcli output directly to the console while capturing it.
         try {
             await new Promise((resolve, reject) => {
@@ -73,7 +92,16 @@ This may take several minutes. Sit back and relax!`, { borderColor: 'yellow' });
                     return reject(err);
                 });
             });
+            const durMs = Date.now() - startTime;
             logger.success('mxcli docker build completed');
+            // show a concise tail of the build output so the log feels informative
+            try {
+                const lines = String(combined || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                const tail = lines.slice(-12).join('\n');
+                logger.box(`Build summary — duration: ${Math.round(durMs/1000)}s\nLast output lines:\n${tail}`, { borderColor: 'green' });
+            } catch (e) {
+                // ignore summary errors
+            }
         } catch (err) {
             // print combined output if available to help debugging
             if (err && err.output) logger.error('mxcli output:\n' + String(err.output));
@@ -126,7 +154,34 @@ This may take several minutes. Sit back and relax!`, { borderColor: 'yellow' });
         await configManager.updateConfig({ clientPort: Number(clientPort) || cfg.clientPort, postgresPort: Number(postgresPort) || cfg.postgresPort });
 
         logger.success('Docker artifacts prepared in ' + dockerDir);
-        logger.info('Run `mxtest run` to start the prepared Docker compose and wait for the application to become available.');
+        if (!(opts && opts.suppressRunHint)) {
+            logger.info('Run `mxtest run` to start the prepared Docker compose and wait for the application to become available.');
+        }
+
+        // After preparing artifacts: do NOT automatically stop or remove any
+        // running compose stack here. `mxtest run` is responsible for stopping
+        // existing stacks (and preserving/restoring snapshot data). Stopping
+        // compose from the build step can accidentally remove volumes (data).
+        try {
+            const dockerAvailable = await (async () => { try { await execa('docker', ['info']); return true; } catch (e) { return false; } })();
+            const composeFilePath = path.join(dockerDir, 'docker-compose.yml');
+            if (dockerAvailable && await fs.pathExists(composeFilePath)) {
+                logger.info('Prepared .docker artifacts; run `mxtest run` to start the stack.');
+            }
+        } catch (e) {
+            // ignore errors here — this is best-effort
+        }
+
+        // If caller didn't request to keep the process alive, exit now so the CLI returns control to the shell.
+        // When build is invoked programmatically (e.g., from `run-build`) callers should pass `opts.noExit = true`.
+        try {
+            if (!(opts && opts.noExit)) {
+                logger.info('Build completed — exiting mxtest process.');
+                process.exit(0);
+            }
+        } catch (e) {
+            // ignore
+        }
 
     } catch (err) {
         logger.error('Build failed: ' + String(err));
