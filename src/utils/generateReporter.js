@@ -137,8 +137,14 @@ async function buildHTML(projectContext, generatedFiles, testResults, outputPath
   await fs.writeFile(outputPath, html, 'utf8');
 }
 
-function escapeHtml(s) { if (!s) return ''; return String(s).replace(/[&<>\"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\' : '&#39;' }[c])); }
-function truncate(s, n){ if(!s) return ''; return s.length>n? s.slice(0,n)+'...':s; }
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+  });
+}
+
+function truncate(s, n) { if (!s) return ''; return s.length > n ? s.slice(0, n) + '...' : s; }
 
 async function buildExcel(projectContext, generatedFiles, testResults, outputPath) {
   const wb = new ExcelJS.Workbook();
