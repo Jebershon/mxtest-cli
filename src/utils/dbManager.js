@@ -1,12 +1,6 @@
 const fs = require('fs-extra');
 const path = require('path');
-let Client;
-try {
-  Client = require('pg').Client;
-} catch (e) {
-  // pg may not be installed; testConnection will fail gracefully
-  Client = null;
-}
+// The code uses the `psql`/`pg_dump` CLI for DB operations. We do not require the Node `pg` package.
 
 const base = path.join(process.cwd(), '.mxtest');
 const cfgPath = path.join(base, 'config.json');
@@ -50,25 +44,7 @@ function loadPassword() {
 }
 
 async function testConnection(cfg, password) {
-  // Prefer Node 'pg' client if available for a fast programmatic check
-  if (Client) {
-    try {
-      const client = new Client({
-        host: cfg.host || 'localhost',
-        port: cfg.port || 5432,
-        user: cfg.user,
-        password,
-        database: cfg.name
-      });
-      await client.connect();
-      await client.end();
-      return true;
-    } catch (err) {
-      // fallthrough to CLI check
-    }
-  }
-
-  // Fall back to using psql CLI to perform a connectivity check
+  // Use the psql CLI to perform a connectivity check
   const execa = require('execa');
   try {
     const args = [
