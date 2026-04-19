@@ -51,12 +51,11 @@ The CLI supports both internal (Compose-provided) and external PostgreSQL config
 Snapshot behavior and commands:
 
 - Default snapshot format: `.backup` (pg_dump -Fc). When a `.backup` is created the CLI also writes a single overwritten plain SQL safety copy at `.mxtest/snapshots/sql/<name>.sql` to ease inspection and simple restores.
-- `mxtest db connect` — interactively configure an external Postgres (host, port, db, user, password). Password is saved in `.mxtest/.env` and connection saved to `.mxtest/config.json`.
-- `mxtest db status` — test and show DB connection status.
+Note: The `mxtest db` command has been removed. Manage external PostgreSQL instances with your preferred DB tools. If you want `mxtest run-build` to inject external DB settings, add the connection info to `.mxtest/config.json` or create a `.docker/docker-compose.mxtest.override.yml` manually.
+
 - `mxtest snapshot save <name>` — save a snapshot to `.mxtest/snapshots/<name>.backup` (default) or `.sql` when requested.
 - `mxtest snapshot list` — list available snapshots.
 - `mxtest snapshot restore <name>` — restore a snapshot (prefers `.backup` if both exist).
-- `mxtest db restore-backup` — interactive helper to import an external `.backup`/`.sql` file into the project: choose from defaults, pick an existing path, or provide a file path; the file is copied into `.mxtest/snapshots` and restored.
 
 In-container snapshot (internal DB only):
 
@@ -109,10 +108,13 @@ mxtest test --snapshot baseline
 
 ## Quick workflow (with DB + snapshots)
 
-1. Connect to an external DB (one-time per project):
+1. If using an external DB (one-time per project):
 
 ```powershell
-mxtest db connect
+# Configure your external Postgres with your preferred tools,
+# then add its connection info to .mxtest/config.json or create
+# a .docker/docker-compose.mxtest.override.yml so `mxtest run-build`
+# can inject the settings into the Mendix service.
 ```
 
 2. Save a baseline snapshot (recommended before disruptive changes):

@@ -1,0 +1,9 @@
+{
+  "db": {
+    "mode": "external",
+    "host": "example.com",
+    "port": 5432,
+    "name": "test",
+    "user": "me"
+  }
+}

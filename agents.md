@@ -21,7 +21,7 @@ This document is a practical playbook for autonomous agents (or human developers
 2. Run `mxtest doctor` to ensure dependencies are available.
 3. Try `mxtest build` and `mxtest run` in a Mendix app with a simple `.mpr` to validate end-to-end.
 4. Run `mxtest test` (Playwright) and confirm an HTML report is produced and served.
-5. Verify snapshot save/restore flows (`mxtest snapshot save|list|restore`, `mxtest db restore-backup`) work when the DB runs inside Docker Compose and for external DBs.
+5. Verify snapshot save/restore flows (`mxtest snapshot save|list|restore`) work when the DB runs inside Docker Compose and for external DBs.
 6. If changing compose or Docker logic, run in a disposable docker environment (or CI) and verify no unexpected images are pulled.
 
 ## Common tasks and where to start
@@ -36,7 +36,7 @@ This document is a practical playbook for autonomous agents (or human developers
   - Add checksum validations for saved snapshots.
 
  - Add non-interactive CI flags
-  - Commands like `mxtest db connect --yes --host ...` and `mxtest db restore-backup --yes` should exist for CI runs to skip interactive prompts.
+  - Snapshot and restore commands should support non-interactive flags (e.g., `--yes` and explicit `--path`) so CI runs can skip interactive prompts.
 
 - Add tests
   - Create lightweight unit tests using mocha/jest for utils (avoid integration tests that require Docker unless running in specialized CI).

@@ -94,10 +94,7 @@ program
   .allowUnknownOption()
   .action(require('../src/commands/playwright'));
 
-program
-  .command('db [action] [arg]')
-  .description('Manage database connection (connect|status|restore-backup)')
-  .action((action, arg) => require('../src/commands/db')(action, arg));
+// `db` command removed: database management handled externally or via snapshots
 
 program
   .command('snapshot [action] [name]')

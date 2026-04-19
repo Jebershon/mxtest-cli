@@ -11,7 +11,7 @@ The project is intentionally small, CommonJS-based, and designed to be used loca
 ## High-level architecture
 
 - `bin/index.js` — CLI entrypoint (commander) that registers commands.
-- `src/commands/*` — command implementations (doctor, init, build, run, run-build, test, db, snapshot, etc.).
+-- `src/commands/*` — command implementations (doctor, init, build, run, run-build, test, snapshot, etc.).
 - `src/utils/*` — reusable utilities: validator, waitForApp, logger, configManager, dbManager, snapshotManager, reportGenerator.
 - `.mxtest/` (per-project hidden storage) — created at runtime to hold `config.json`, `.env`, and `snapshots/`.
 - `.docker/` (project docker artifacts) — created by `mxcli` or by `mxtest build` and used by `mxtest run`/`run-build`.
@@ -35,10 +35,10 @@ The project is intentionally small, CommonJS-based, and designed to be used loca
 
 6. DB & snapshots
    - `.mxtest/config.json` stores DB mode and connection info. `.mxtest/.env` stores DB password.
-   - `mxtest db connect` prompts the user and saves credentials. `mxtest db status` checks connectivity.
+   - External DBs should be configured with your preferred tools; `.mxtest/config.json` can be used to store connection info if you want `mxtest run-build` to inject overrides.
    - Snapshot functions use system Postgres client tools (`pg_dump`, `pg_restore`/`psql`) instead of a Node `pg` dependency. Snapshots are stored under `.mxtest/snapshots/` (canonical `.backup` files) and the tooling also maintains a single overwritten plain SQL safety copy at `.mxtest/snapshots/sql/<name>.sql`.
    - The snapshot manager attempts, in order: native host `pg_dump`/`psql`, `docker compose exec` streaming with environment injection (preferred for containerized DB), and `docker run` with the official Postgres image as a fallback.
-   - `mxtest db restore-backup` is available as an interactive helper to import an external `.backup`/`.sql` file into the project snapshots and restore it.
+   - To import an external `.backup`/`.sql` file into project snapshots, copy it into `.mxtest/snapshots/` and run `mxtest snapshot restore <name>`.
    - When DB mode is `external`, `mxtest run-build` writes a temporary compose override under `.docker/` that injects the external DB connection into the Mendix service and scales local `db` down.
 
 ## Key files to inspect when making changes

@@ -20,7 +20,7 @@ module.exports = async function snapshotCmd(action, name, opts = {}) {
     const cfg = db.readConfig().db || {};
     if (cfg.mode === 'external') {
       logger.error('Project DB mode is external; mxtest snapshot save is disabled for external DBs.');
-      logger.info('Use your external DB tools to create backups, or run `mxtest db connect` to change mode.');
+      logger.info('Use your external DB tools to create backups and manage external DB connections.');
       process.exit(1);
     }
 
