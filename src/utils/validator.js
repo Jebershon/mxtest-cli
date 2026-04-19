@@ -56,7 +56,13 @@ async function checkPgClient() {
     await execa('psql', ['--version']);
     return { ok: true, version: 'pg client available' };
   } catch (err) {
-    return { ok: false, message: 'Postgres client not found (pg_dump/psql). Install PostgreSQL client tools or pgAdmin. See https://www.postgresql.org/download/ or https://www.pgadmin.org/download/' };
+    // If native clients not available, check for Docker as a fallback
+    try {
+      const res = await execa('docker', ['--version']);
+      return { ok: true, version: `docker fallback - ${res.stdout.trim()}` };
+    } catch (err2) {
+      return { ok: false, message: 'Postgres client not found (pg_dump/psql) and Docker not available. Install PostgreSQL client tools or enable Docker. See https://www.postgresql.org/download/ or https://www.pgadmin.org/download/' };
+    }
   }
 }
 
