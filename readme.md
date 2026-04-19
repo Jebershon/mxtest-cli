@@ -39,6 +39,80 @@ Primary commands and short notes:
 - `mxtest config [show|set]` — view or update `mxtest.config.json` (allowed keys: `testDir`, `appUrl`, `clientPort`, `postgresPort`, `waitTimeout`, `image`).
 - `mxtest playwright [...args]` — pass-through to `npx playwright`.
 
+### Database & snapshots
+
+The CLI now supports external PostgreSQL configuration and database snapshots using a zero-config UX. The tool stores per-project state under a hidden `.mxtest/` folder in your project root. That folder contains:
+
+- `.mxtest/config.json` — DB mode and connection info
+- `.mxtest/.env` — stored DB password (used at runtime)
+- `.mxtest/snapshots/` — saved SQL dumps
+
+Commands:
+
+- `mxtest db connect` — interactively configure an external Postgres (host, port, db, user, password). Password is saved in `.mxtest/.env` and connection saved to `.mxtest/config.json`.
+- `mxtest db status` — test and show DB connection status.
+- `mxtest snapshot save <name>` — produce a SQL dump (uses `pg_dump`) and store it in `.mxtest/snapshots/<name>.sql`.
+- `mxtest snapshot list` — list available snapshots.
+- `mxtest snapshot restore <name>` — restore a snapshot using `psql` (overwrites DB data).
+
+Notes and requirements:
+
+- `pg_dump` and `psql` must be available on PATH for snapshot operations (these are the Postgres client tools).
+- `mxtest` stores the DB password in `.mxtest/.env` for convenience; treat `.mxtest` like a local secret store and add it to `.gitignore` if needed.
+
+### How run-build uses the DB config
+
+`mxtest run-build` detects whether your project is configured to use an external database (via `.mxtest/config.json`). If an external DB is configured the CLI will:
+
+- write a temporary compose override (`.docker/docker-compose.mxtest.override.yml`) that injects the external DB connection into the Mendix service environment variables (so the runtime connects to your external Postgres), and
+- scale down the local `db` service (so local Postgres is not started by compose).
+
+This means you can run the same `mxtest run-build` workflow whether you use the bundled Postgres or an external DB.
+
+### Using snapshots when testing
+
+You can restore a snapshot before running tests:
+
+```powershell
+mxtest snapshot restore baseline
+mxtest run-build
+mxtest test --snapshot baseline
+```
+
+`mxtest test` also accepts `--snapshot <name>`; when specified the CLI will restore the snapshot automatically before running the tests.
+
+## Quick workflow (with DB + snapshots)
+
+1. Connect to an external DB (one-time per project):
+
+```powershell
+mxtest db connect
+```
+
+2. Save a baseline snapshot:
+
+```powershell
+mxtest snapshot save baseline
+```
+
+3. Rebuild and start with the configured DB:
+
+```powershell
+mxtest run-build
+```
+
+4. Run tests using a snapshot:
+
+```powershell
+mxtest test --snapshot baseline
+```
+
+## Security and notes
+
+- `.mxtest/.env` contains the DB password in plain text for convenience; consider using OS keychains, encrypted stores, or CI secrets for production workflows.
+- Snapshot restore is destructive — it will overwrite the target database. Use with caution.
+
+
 Notes:
 - `mxtest run` intentionally does not attempt to pull remote images. It expects `mxtest build` (or `run-build`) to produce local build artifacts, and will use those local images. If you intentionally want to use a remote image instead of local artifacts, set `image` in `mxtest.config.json` or run a custom compose.
 - `mxtest run-build` will try to stop any prior stack and remove local images created by that stack before rebuilding to avoid stale image/container issues.
