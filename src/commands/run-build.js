@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const waitForApp = require('../utils/waitForApp');
 const buildCmd = require('./build');
+const dbManager = require('../utils/dbManager');
 
 module.exports = async function runBuild(opts = {}) {
   try {
@@ -130,7 +131,7 @@ module.exports = async function runBuild(opts = {}) {
       }
     }
 
-    // If a Dockerfile exists, ensure the compose file prefers a local build
+  // If a Dockerfile exists, ensure the compose file prefers a local build
     // (so docker won't try to pull an image). Then, when Dockerfile or
     // YAML are present, run `docker compose build` to build local images.
     if (hasDockerfile) {
@@ -160,10 +161,43 @@ module.exports = async function runBuild(opts = {}) {
       }
     }
 
+    // Prepare docker-compose up arguments. If project is configured to use
+    // an external database, create a small override file to inject DB env
+    // values into the Mendix service and avoid starting the local `db`
+    // service by scaling it to 0.
+    const dbCfg = dbManager.readConfig().db || {};
+    const upArgsBase = ['compose', 'up', '-d'];
+    let upCwd = dockerDir;
+    let extraEnv = { ...process.env };
+    let extraArgs = [];
+
+    if (dbCfg.mode === 'external') {
+      // write an override compose file that injects runtime DB params into
+      // the mendix service so it connects to the external DB. We will also
+      // scale the local db service to 0 to avoid starting it.
+      const overridePath = path.join(dockerDir, 'docker-compose.mxtest.override.yml');
+      const host = dbCfg.host || 'localhost';
+      const port = dbCfg.port || 5432;
+      const name = dbCfg.name || 'mendix';
+      const user = dbCfg.user || 'mendix';
+      const pass = dbManager.loadPassword();
+      const override = `services:\n  mendix:\n    environment:\n      - RUNTIME_PARAMS_DATABASEHOST=${host}:${port}\n      - RUNTIME_PARAMS_DATABASENAME=${name}\n      - RUNTIME_PARAMS_DATABASEUSERNAME=${user}\n      - RUNTIME_PARAMS_DATABASEPASSWORD=${pass}\n`;
+      try {
+        await fs.writeFile(overridePath, override, 'utf8');
+        extraArgs = ['-f', 'docker-compose.yml', '-f', 'docker-compose.mxtest.override.yml', '--scale', 'db=0'];
+        // ensure env contains DB values for any other use-cases
+        extraEnv = { ...extraEnv, POSTGRES_HOST: host, POSTGRES_PORT: String(port), POSTGRES_DB: name, POSTGRES_USER: user, POSTGRES_PASSWORD: pass };
+        logger.info('Using external DB configuration; wrote temporary compose override to avoid starting local postgres');
+      } catch (err) {
+        logger.warn('Failed to write docker-compose override: ' + String(err));
+      }
+    }
+
     // Now bring the new build up
     const spinUp = ora('Starting docker compose (up -d)...').start();
     try {
-      await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir });
+      const upArgs = upArgsBase.concat(extraArgs.length ? extraArgs : []);
+      await execa('docker', upArgs, { cwd: upCwd, stdio: 'inherit', env: extraEnv });
       spinUp.succeed('Docker compose started');
     } catch (err) {
       spinUp.fail('docker compose up failed');

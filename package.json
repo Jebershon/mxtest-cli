@@ -23,6 +23,7 @@
     "cli-progress": "^3.0.0",
     "commander": "^11.0.0",
     "execa": "^5.0.0",
+  "pg": "^8.10.0",
     "fs-extra": "^11.0.0",
     "inquirer": "^8.0.0",
     "ora": "^5.0.0"

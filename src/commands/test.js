@@ -6,6 +6,7 @@ const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const reportGenerator = require('../utils/reportGenerator');
 const waitForApp = require('../utils/waitForApp');
+const snap = require('../utils/snapshotManager');
 
 module.exports = async function testCmd(options = {}) {
   try {
@@ -19,6 +20,17 @@ module.exports = async function testCmd(options = {}) {
     if (!await fs.pathExists(testDir)) {
       logger.error(`Test directory not found: ${testDir}`);
       process.exit(1);
+    }
+
+    // If user requested a snapshot restore before tests, do that now
+    if (opts.snapshot) {
+      try {
+        await snap.restore(opts.snapshot);
+        logger.info('Snapshot restored: ' + opts.snapshot);
+      } catch (err) {
+        logger.error('Snapshot restore failed: ' + String(err));
+        process.exit(1);
+      }
     }
 
     // quick wait

@@ -84,4 +84,14 @@ program
   .allowUnknownOption()
   .action(require('../src/commands/playwright'));
 
+program
+  .command('db [action]')
+  .description('Manage database connection (connect|status)')
+  .action((action) => require('../src/commands/db')(action));
+
+program
+  .command('snapshot [action] [name]')
+  .description('Manage DB snapshots (save|list|restore)')
+  .action((action, name) => require('../src/commands/snapshot')(action, name));
+
 program.parse();
