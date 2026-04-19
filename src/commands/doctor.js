@@ -13,6 +13,7 @@ module.exports = async function doctor(opts = {}) {
       { name: 'mxcli', fn: validator.checkMxcli },
       { name: 'docker', fn: validator.checkDocker },
       { name: 'playwright', fn: validator.checkPlaywright },
+      { name: 'claude-code', fn: validator.checkClaudeCode },
       { name: '.mpr file', fn: () => validator.checkMprFile() },
       { name: 'postgres client (pg_dump/psql)', fn: validator.checkPgClient }
     ];
