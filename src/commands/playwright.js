@@ -23,7 +23,14 @@ module.exports = async function playwrightCmd(args) {
       logger.info('Tip: Codegen helps create Playwright scripts. Remember to review and convert to tests.');
     }
   } catch (err) {
-    logger.error('playwright command failed: ' + String(err));
-    process.exit(1);
+    logger.error('playwright command failed — exit code: ' + (err && (err.exitCode || err.code) ? (err.exitCode || err.code) : 'unknown'));
+    if (err && err.stdout) logger.error('\nstdout:\n' + String(err.stdout));
+    if (err && err.stderr) logger.error('\nstderr:\n' + String(err.stderr));
+    logger.info('Troubleshooting steps:');
+    logger.info('- Run `npm install` to ensure Playwright is installed in this project.');
+    logger.info('- Run `npx playwright --version` to confirm the Playwright CLI is available.');
+    logger.info('- If Playwright is present but browsers are missing, run `npx playwright install` (or `npx playwright install --with-deps` in CI).');
+    logger.info('- For CI, ensure Playwright and browsers are installed in your pipeline before running tests.');
+    process.exit(err && err.exitCode ? err.exitCode : 1);
   }
 };
