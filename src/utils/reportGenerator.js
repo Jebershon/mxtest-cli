@@ -14,6 +14,7 @@ function escapeHtml(str) {
 async function build(results, outputDir) {
   await fs.ensureDir(outputDir);
   const outFile = path.join(outputDir, 'report.html');
+  const indexFile = path.join(outputDir, 'index.html');
   const rows = [];
 
   const summary = results || {};
@@ -63,7 +64,14 @@ async function build(results, outputDir) {
 </html>`;
 
   await fs.writeFile(outFile, html, 'utf8');
-  return outFile;
+  // Also write an index.html so servers (including `npx playwright show-report`)
+  // that expect an index file can serve the report at the directory root.
+  try {
+    await fs.writeFile(indexFile, html, 'utf8');
+  } catch (err) {
+    // non-fatal
+  }
+  return indexFile;
 }
 
 module.exports = { build };
