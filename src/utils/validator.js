@@ -66,10 +66,20 @@ async function checkPgClient() {
   }
 }
 
+async function checkClaudeCode() {
+  try {
+    const res = await execa('claude', ['--version']);
+    return { ok: true, version: (res && res.stdout) ? res.stdout.trim() : 'unknown' };
+  } catch (err) {
+    return { ok: false, message: 'Claude Code not found. Install: npm install -g @anthropic-ai/claude-code then run: claude login' };
+  }
+}
+
 module.exports = {
   checkMxcli,
   checkDocker,
   checkPlaywright,
   checkMprFile
   ,checkPgClient
+  ,checkClaudeCode
 };

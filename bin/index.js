@@ -94,6 +94,8 @@ program
   .allowUnknownOption()
   .action(require('../src/commands/playwright'));
 
+require('../src/commands/generate')(program);
+
 // `db` command removed: database management handled externally or via snapshots
 
 program
