@@ -143,10 +143,9 @@ module.exports = function(program) {
             } catch (e) {
               // ignore
             }
-            ui.startSpinner; // noop to satisfy rule about spinner var
+            // stop the spinner before printing
+            try { spinRun.fail('Playwright failed'); } catch (e) {}
             logger.error(err.stderr || err.message || 'Playwright run failed');
-            // mark spinner as failed
-            try { ui.startSpinner('').fail('Playwright failed'); } catch (e) {}
           }
         }
 
