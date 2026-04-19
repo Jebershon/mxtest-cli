@@ -14,8 +14,7 @@ module.exports = async function doctor(opts = {}) {
       { name: 'docker', fn: validator.checkDocker },
       { name: 'playwright', fn: validator.checkPlaywright },
       { name: '.mpr file', fn: () => validator.checkMprFile() },
-      { name: 'postgres client (pg_dump/psql)', fn: validator.checkPgClient },
-      { name: "node 'pg' package", fn: validator.checkNodePgPackage }
+      { name: 'postgres client (pg_dump/psql)', fn: validator.checkPgClient }
     ];
 
     let allOk = true;

@@ -60,21 +60,10 @@ async function checkPgClient() {
   }
 }
 
-async function checkNodePgPackage() {
-  try {
-    // verify that the npm package 'pg' is installed and can be required
-    require('pg');
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, message: "Node package 'pg' not installed. Run: npm install pg" };
-  }
-}
-
 module.exports = {
   checkMxcli,
   checkDocker,
   checkPlaywright,
   checkMprFile
   ,checkPgClient
-  ,checkNodePgPackage
 };

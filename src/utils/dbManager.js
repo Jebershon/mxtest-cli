@@ -50,18 +50,36 @@ function loadPassword() {
 }
 
 async function testConnection(cfg, password) {
-  if (!Client) return false;
+  // Prefer Node 'pg' client if available for a fast programmatic check
+  if (Client) {
+    try {
+      const client = new Client({
+        host: cfg.host || 'localhost',
+        port: cfg.port || 5432,
+        user: cfg.user,
+        password,
+        database: cfg.name
+      });
+      await client.connect();
+      await client.end();
+      return true;
+    } catch (err) {
+      // fallthrough to CLI check
+    }
+  }
+
+  // Fall back to using psql CLI to perform a connectivity check
+  const execa = require('execa');
   try {
-    const client = new Client({
-      host: cfg.host || 'localhost',
-      port: cfg.port || 5432,
-      user: cfg.user,
-      password,
-      database: cfg.name
-    });
-    await client.connect();
-    await client.end();
-    return true;
+    const args = [
+      '-h', cfg.host || 'localhost',
+      '-p', String(cfg.port || 5432),
+      '-U', cfg.user || 'postgres',
+      '-d', cfg.name || 'postgres',
+      '-c', 'SELECT 1;'
+    ];
+    const res = await execa('psql', args, { env: { ...process.env, PGPASSWORD: password }, stdio: 'ignore' });
+    return res.exitCode === 0;
   } catch (err) {
     return false;
   }
