@@ -1,0 +1,35 @@
+# Development files
+.git
+.gitignore
+.claude
+.mxtest
+node_modules
+coverage
+*.log
+
+# Test and development artifacts
+test-results/
+*.spec.js
+__tests__
+__mocks__
+
+# Editor configs
+.vscode
+.idea
+.editorconfig
+*.swp
+*.swo
+
+# Project files
+TODO.md
+IMPLEMENTATION_SUMMARY.md
+agents.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+Jenkinsfile
+
+# OS
+.DS_Store
+Thumbs.db

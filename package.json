@@ -1,7 +1,15 @@
 {
   "name": "mxtest-cli",
   "version": "1.0.0",
-  "description": "Mendix + Playwright Testing CLI",
+  "description": "Mendix + Playwright Testing CLI — Automate Docker builds, test execution, and test generation",
+  "homepage": "https://github.com/your-org/mxtest-cli",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/mxtest-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-org/mxtest-cli/issues"
+  },
   "bin": {
     "mxtest": "bin/index.js"
   },
@@ -10,15 +18,27 @@
   "engines": {
     "node": ">=14"
   },
+  "files": [
+    "bin",
+    "src",
+    "LICENSE",
+    "readme.md"
+  ],
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "mendix",
+    "mendix-cli",
     "playwright",
-    "cli"
+    "testing",
+    "cli",
+    "automation",
+    "docker",
+    "test-generation",
+    "claude-ai"
   ],
-  "author": "",
+  "author": "Your Name <your.email@example.com>",
   "license": "MIT",
   "dependencies": {
     "axios": "^1.0.0",
