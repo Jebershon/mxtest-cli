@@ -117,8 +117,8 @@ async function promptForGenerate(opts = {}) {
     questions.push({
       type: 'input',
       name: 'output',
-      message: 'Output directory (or press Enter for tests/generated)',
-      default: 'tests/generated',
+      message: 'Output directory (or press Enter for .mxtest/tests/generated)',
+      default: '.mxtest/tests/generated',
     });
   }
 
@@ -130,6 +130,29 @@ async function promptForGenerate(opts = {}) {
   });
 
   questions.push({
+    type: 'list',
+    name: 'skill',
+    message: 'Select test generation skill',
+    choices: [
+      { name: 'Mendix Widgets (with DatePicker, ComboBox, Dropdown support)', value: path.join(__dirname, '..', 'skills', 'mendix-widgets.skill.md') },
+      { name: 'Basic Playwright (standard approach)', value: path.join(__dirname, '..', 'skills', 'playwright.skill.md') },
+      { name: 'Custom skill file', value: 'custom' }
+    ],
+    default: path.join(__dirname, '..', 'skills', 'mendix-widgets.skill.md'),
+  });
+
+  if (!opts.skill) {
+    // Add question for custom skill path if user chooses custom
+    questions.push({
+      type: 'input',
+      name: 'customSkillPath',
+      message: 'Custom skill file path',
+      when: (answers) => answers.skill === 'custom',
+      validate: (input) => input.length > 0 ? true : 'Please enter a path',
+    });
+  }
+
+  questions.push({
     type: 'confirm',
     name: 'dryRun',
     message: 'Dry run (preview without writing files)?',
@@ -137,6 +160,13 @@ async function promptForGenerate(opts = {}) {
   });
 
   const answers = await inquirer.prompt(questions);
+
+  // Handle custom skill path
+  if (answers.customSkillPath) {
+    answers.skill = answers.customSkillPath;
+    delete answers.customSkillPath;
+  }
+
   return { ...opts, ...answers };
 }
 

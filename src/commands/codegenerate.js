@@ -29,7 +29,9 @@ module.exports = function(program) {
 
         const targetUrl = url || cfg.appUrl || `http://localhost:${cfg.clientPort || 8080}`;
 
-        const defaultOutDir = cfg.testDir ? path.resolve(cwd, cfg.testDir) : path.join(cwd, 'tests', 'auto');
+        // Use configured testDir, defaulting to .mxtest/tests
+        const testDir = cfg.testDir || '.mxtest/tests';
+        const defaultOutDir = path.resolve(cwd, testDir, 'auto');
         const outFile = opts.output ? (path.isAbsolute(opts.output) ? opts.output : path.resolve(cwd, opts.output)) : path.join(defaultOutDir, `codegen-${Date.now()}.spec.js`);
 
         await fs.ensureDir(path.dirname(outFile));
@@ -39,8 +41,16 @@ module.exports = function(program) {
         }
 
         logger.info(`Launching Playwright codegen for ${targetUrl} and saving to ${outFile}`);
+        logger.info('Tip: Maximize the browser window to ensure all page elements (including nav-bars) are visible');
         try {
-          await runPlaywrightCmd(['codegen', targetUrl, '--output', outFile], { cwd, env: Object.assign({}, process.env, { APP_URL: targetUrl }) });
+          // Add viewport and window size options to ensure full page visibility including bottom nav-bar
+          const playwrightArgs = [
+            'codegen',
+            targetUrl,
+            '--output', outFile,
+            '--viewport-size=1280,1024'  // Standard viewport with good height for bottom elements
+          ];
+          await runPlaywrightCmd(playwrightArgs, { cwd, env: Object.assign({}, process.env, { APP_URL: targetUrl }) });
           logger.success('Playwright codegen finished — saved to: ' + outFile);
         } catch (err) {
           logger.error('Playwright codegen failed: ' + (err && err.message ? err.message : String(err)));

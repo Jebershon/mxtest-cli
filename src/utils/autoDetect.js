@@ -53,7 +53,18 @@ async function detectAppUrl(options = {}) {
 }
 
 async function ensureTestDirs(cwd = process.cwd()) {
-  const base = path.join(cwd, 'tests');
+  // Use config testDir if available, default to .mxtest/tests
+  let testDirConfig = '.mxtest/tests';
+  try {
+    const cfg = await configManager.readConfig();
+    if (cfg.testDir) {
+      testDirConfig = cfg.testDir;
+    }
+  } catch (e) {
+    // ignore config read errors, use default
+  }
+
+  const base = path.join(cwd, testDirConfig);
   const autoDir = path.join(base, 'auto');
   const genDir = path.join(base, 'generated');
   await fs.ensureDir(base);
