@@ -7,12 +7,19 @@ const configManager = require('../utils/configManager');
 const reportGenerator = require('../utils/reportGenerator');
 const waitForApp = require('../utils/waitForApp');
 const snap = require('../utils/snapshotManager');
+const interactive = require('../utils/interactivePrompt');
 
 module.exports = async function testCmd(options = {}) {
   try {
     // commander passes options object; sometimes first arg is options
-    const opts = (typeof options === 'object' && options) || {};
+    let opts = (typeof options === 'object' && options) || {};
     const cfg = await configManager.readConfig();
+
+    // Prompt interactively if minimal options provided
+    if (interactive.shouldPromptInteractively(opts, ['path', 'url'])) {
+      opts = await interactive.promptForTest(opts);
+    }
+
     ui.banner('mxtest — test', 'Running Playwright tests and generating report');
 
     const testDir = path.resolve(process.cwd(), opts.path || cfg.testDir || './tests');
@@ -102,7 +109,9 @@ module.exports = async function testCmd(options = {}) {
 
     logger.success(`✔ ${passed} passed  ✖ ${failed} failed  ⚠ ${skipped} skipped  ⏱ ${Math.round(duration)}ms`);
 
-    if (!opts.ci && !opts.noReport) {
+    // Handle report opening based on options or interactive choice
+    const shouldOpenReport = !opts.ci && (opts.openReport !== false) && (opts.noReport !== true);
+    if (shouldOpenReport) {
       // open the generated HTML report directly (avoid Playwright show-report passthrough)
       try {
         const execa = require('execa');

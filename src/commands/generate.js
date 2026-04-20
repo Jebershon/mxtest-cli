@@ -9,6 +9,7 @@ const specParser = require('../utils/specParser');
 const generateReporter = require('../utils/generateReporter');
 const validator = require('../utils/validator');
 const { runPlaywrightCmd } = require('../utils/playwrightHelper');
+const interactive = require('../utils/interactivePrompt');
 
 module.exports = function(program) {
   program
@@ -22,6 +23,13 @@ module.exports = function(program) {
     .option('--mock <path>')
     .action(async (opts = {}) => {
       try {
+        ui.banner('mxtest — generate', 'Generating Playwright tests using Claude');
+
+        // Prompt interactively if minimal options provided
+        if (interactive.shouldPromptInteractively(opts, ['page', 'flow'])) {
+          const answers = await interactive.promptForGenerate(opts);
+          opts = { ...opts, ...answers };
+        }
         // STEP 1 - Preflight
         // If using --mock, skip the external Claude CLI check
         let cl;

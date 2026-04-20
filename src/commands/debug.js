@@ -5,6 +5,7 @@ const ui = require('../utils/ui');
 const validator = require('../utils/validator');
 const { runPlaywrightCmd } = require('../utils/playwrightHelper');
 const execa = require('execa');
+const interactive = require('../utils/interactivePrompt');
 
 module.exports = function(program) {
   program
@@ -14,10 +15,17 @@ module.exports = function(program) {
     .option('--url <url>', 'Application URL to set in APP_URL')
     .action(async (target, opts = {}) => {
       try {
+        ui.banner('mxtest — debug', 'Preparing Playwright interactive debug session');
+
+        // Prompt interactively if no target provided
+        if (!target && interactive.shouldPromptInteractively(opts, ['target', 'url'])) {
+          const answers = await interactive.promptForDebug(opts);
+          target = answers.target || target;
+          opts = { ...opts, ...answers };
+        }
         const cwd = opts.cwd ? path.resolve(process.cwd(), opts.cwd) : process.cwd();
 
         // Validate Playwright and browsers
-        ui.banner('mxtest — debug', 'Preparing Playwright interactive debug session');
         const res = await validator.checkPlaywright();
         if (!res.ok) {
           logger.warn(res.message || 'Playwright validation failed');

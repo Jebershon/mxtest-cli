@@ -3,6 +3,8 @@ const fs = require('fs-extra');
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const { runPlaywrightCmd } = require('../utils/playwrightHelper');
+const ui = require('../utils/ui');
+const interactive = require('../utils/interactivePrompt');
 
 module.exports = function(program) {
   program
@@ -13,6 +15,14 @@ module.exports = function(program) {
     .option('--force', 'Overwrite existing output file')
     .action(async (url, opts = {}) => {
       try {
+        ui.banner('mxtest — codegenerate', 'Launching Playwright code recorder');
+
+        // Prompt interactively if no URL provided
+        if (!url && interactive.shouldPromptInteractively(opts, ['url'])) {
+          const answers = await interactive.promptForCodegenerate(opts);
+          url = answers.url || url;
+          opts = { ...opts, ...answers };
+        }
         const cwd = opts.cwd ? path.resolve(process.cwd(), opts.cwd) : process.cwd();
         let cfg = {};
         try { cfg = await configManager.readConfig(); } catch (e) { /* ignore */ }

@@ -342,10 +342,10 @@ module.exports = async function runBuild(opts = {}) {
     // values into the Mendix service and avoid starting the local `db`
     // service by scaling it to 0.
     const dbCfg = dbManager.readConfig().db || {};
-    const upArgsBase = ['compose', 'up', '-d'];
+    const upArgsBase = ['compose'];
     let upCwd = dockerDir;
     let extraEnv = { ...process.env };
-    let extraArgs = [];
+    let composeFiles = [];
 
     if (dbCfg.mode === 'external') {
       // write an override compose file that injects runtime DB params into
@@ -360,7 +360,7 @@ module.exports = async function runBuild(opts = {}) {
       const override = `services:\n  mendix:\n    environment:\n      - RUNTIME_PARAMS_DATABASEHOST=${host}:${port}\n      - RUNTIME_PARAMS_DATABASENAME=${name}\n      - RUNTIME_PARAMS_DATABASEUSERNAME=${user}\n      - RUNTIME_PARAMS_DATABASEPASSWORD=${pass}\n`;
       try {
         await fs.writeFile(overridePath, override, 'utf8');
-        extraArgs = ['-f', 'docker-compose.yml', '-f', 'docker-compose.mxtest.override.yml', '--scale', 'db=0'];
+        composeFiles = ['-f', 'docker-compose.yml', '-f', 'docker-compose.mxtest.override.yml'];
         // ensure env contains DB values for any other use-cases
         extraEnv = { ...extraEnv, POSTGRES_HOST: host, POSTGRES_PORT: String(port), POSTGRES_DB: name, POSTGRES_USER: user, POSTGRES_PASSWORD: pass };
         logger.info('Using external DB configuration; wrote temporary compose override to avoid starting local postgres');
@@ -372,7 +372,12 @@ module.exports = async function runBuild(opts = {}) {
     // Now bring the new build up
     const spinUp = ui.startSpinner('Starting docker compose (up -d)...');
     try {
-      const upArgs = upArgsBase.concat(extraArgs.length ? extraArgs : []);
+      // Build args in correct order: docker compose [compose-opts] up [up-opts]
+      // -f flags must come before the 'up' subcommand
+      const upArgs = upArgsBase
+        .concat(composeFiles.length ? composeFiles : [])
+        .concat(['up', '-d'])
+        .concat(dbCfg.mode === 'external' ? ['--scale', 'db=0'] : []);
       await execa('docker', upArgs, { cwd: upCwd, stdio: 'inherit', env: extraEnv });
       spinUp.succeed('Docker compose started');
       // If internal DB mode and baseline snapshot exists, restore it into
@@ -409,7 +414,10 @@ module.exports = async function runBuild(opts = {}) {
         if (started) {
           try {
             logger.info('Retrying `docker compose up` after starting Docker Desktop...');
-            const upArgs = upArgsBase.concat(extraArgs.length ? extraArgs : []);
+            const upArgs = upArgsBase
+              .concat(composeFiles.length ? composeFiles : [])
+              .concat(['up', '-d'])
+              .concat(dbCfg.mode === 'external' ? ['--scale', 'db=0'] : []);
             await execa('docker', upArgs, { cwd: upCwd, stdio: 'inherit', env: extraEnv });
             spinUp.succeed('Docker compose started');
             // Run baseline restore logic (same as successful path)

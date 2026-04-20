@@ -6,6 +6,7 @@ const validator = require('../utils/validator');
 const configManager = require('../utils/configManager');
 const dbManager = require('../utils/dbManager');
 const runDoctor = require('./doctor');
+const execa = require('execa');
 
 module.exports = async function init() {
   try {
@@ -13,6 +14,30 @@ module.exports = async function init() {
     const ok = await runDoctor({ exitOnFailure: false });
     if (!ok) {
       logger.warn('Doctor reported missing dependencies; init will continue but some features may not work until dependencies are installed');
+    }
+
+    // Check for Playwright installation (global or local)
+    let playwrightInstalled = false;
+    try {
+      await execa('npx', ['playwright', '--version']);
+      playwrightInstalled = true;
+    } catch (e) {
+      // Playwright not found
+    }
+
+    if (!playwrightInstalled) {
+      logger.warn('Playwright not installed globally');
+      logger.box(
+        'To use mxtest test, generate, and codegen commands, install Playwright globally:\n\n' +
+        '1. Install Playwright packages globally:\n' +
+        '   npm install -g @playwright/test playwright\n\n' +
+        '2. Install Playwright browsers (one-time):\n' +
+        '   npx playwright install\n\n' +
+        '3. (Optional) For Linux, also install system dependencies:\n' +
+        '   npx playwright install-deps\n\n' +
+        'After installation, run: mxtest init',
+        { borderColor: 'yellow' }
+      );
     }
 
     // ensure .mpr and other checks are done by doctor; fetch mpr path
@@ -91,6 +116,18 @@ module.exports = async function init() {
     }
 
     logger.box('Initialization complete', { borderColor: 'green' });
+
+    // Final reminder about Playwright if not installed
+    if (!playwrightInstalled) {
+      logger.info('');
+      logger.warn('⚠ Playwright is still not installed globally. Next steps:');
+      logger.info('  npm install -g @playwright/test playwright');
+      logger.info('  npx playwright install');
+      logger.info('');
+      logger.info('Then run: mxtest test');
+    } else {
+      logger.info('✓ Playwright is ready. Run tests with: mxtest test');
+    }
   } catch (err) {
     logger.error('Init failed: ' + String(err));
     process.exit(1);
