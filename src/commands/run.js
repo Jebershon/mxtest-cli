@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const waitForApp = require('../utils/waitForApp');
 const orchestrator = require('../utils/snapshotOrchestrator');
+const dockerHelper = require('../utils/dockerHelper');
 
 module.exports = async function run(opts = {}) {
   try {
@@ -78,6 +79,24 @@ module.exports = async function run(opts = {}) {
     // stack is running from this .docker, stop and clear it first so we start
     // cleanly with the existing build artifacts and can restore snapshot data.
     try {
+      // Verify Docker daemon availability before attempting compose operations.
+      let dockerAvailable = true;
+      try {
+        await execa('docker', ['info']);
+      } catch (err) {
+        dockerAvailable = false;
+        try {
+          const started = await dockerHelper.startDockerDesktopIfWindows(err);
+          if (started) dockerAvailable = true;
+        } catch (e) {
+          // ignore helper errors
+        }
+        if (!dockerAvailable) {
+          logger.error('Docker daemon not reachable. Start Docker Desktop and try again.');
+          process.exit(1);
+        }
+      }
+
       let containersRunning = false;
       try {
         const ps = await execa('docker', ['compose', '-f', composePath, 'ps', '-q']);
@@ -106,7 +125,27 @@ module.exports = async function run(opts = {}) {
         const stdout = (err.stdout) ? String(err.stdout) : '';
         const combined = (stderr + '\n' + stdout).toLowerCase();
         const portConflictRegex = /port is already allocated|address already in use|bind for .* failed|already in use/i;
-        if (portConflictRegex.test(combined)) {
+        const npipeRegex = /npipe:|dockerDesktopLinuxEngine|failed to connect to the docker api|the system cannot find the file specified/i;
+
+        // If Docker isn't running on Windows, try to start Docker Desktop and retry once
+        if (process.platform === 'win32' && npipeRegex.test(combined)) {
+          const started = await dockerHelper.startDockerDesktopIfWindows(err);
+          if (started) {
+            try {
+              logger.info('Retrying `docker compose up` after starting Docker Desktop...');
+              await execa('docker', ['compose', 'up', '-d'], { cwd: dockerDir, stdio: 'inherit' });
+              logger.success('Docker compose started');
+            } catch (retryErr) {
+              if (retryErr.stderr) logger.error('docker compose stderr:\n' + String(retryErr.stderr));
+              if (retryErr.stdout) logger.info('docker compose stdout:\n' + String(retryErr.stdout));
+              logger.error('docker compose failed after retry');
+              process.exit(1);
+            }
+          } else {
+            logger.error('docker compose failed: ' + String(err));
+            process.exit(1);
+          }
+        } else if (portConflictRegex.test(combined)) {
           logger.warn('Port conflict detected. Running `docker compose down` and retrying `docker compose up -d`.');
           try {
             await execa('docker', ['compose', 'down'], { cwd: dockerDir, stdio: 'inherit' });

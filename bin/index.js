@@ -47,7 +47,6 @@ program
 
 program
   .command('test')
-  .allowUnknownOption()
   .option('--path <path>', 'Path to tests')
   .option('--url <url>', 'Application URL to test against')
   .option('--headed', 'Run headed')
@@ -59,12 +58,9 @@ program
   .action(require('../src/commands/test'));
 
 program
-  .command('result')
-  .description('Show last Playwright report')
-  .action(() => {
-    const cmd = require('../src/commands/playwright');
-    return cmd(['show-report']);
-  });
+  .command('report')
+  .description('Open latest test HTML report')
+  .action(() => require('../src/commands/report')());
 
 program
   .command('down')
@@ -88,13 +84,11 @@ program
   .description('Show or set config values')
   .action(require('../src/commands/config'));
 
-program
-  .command('playwright [...args]')
-  .description('Pass-through to npx playwright')
-  .allowUnknownOption()
-  .action(require('../src/commands/playwright'));
+// Direct Playwright passthrough removed to enforce controlled commands
 
 require('../src/commands/generate')(program);
+require('../src/commands/codegenerate')(program);
+require('../src/commands/debug')(program);
 
 // `db` command removed: database management handled externally or via snapshots
 
@@ -104,4 +98,5 @@ program
   .option('--verbose', 'Print detailed diagnostics during snapshot operations')
   .action((action, name, opts) => require('../src/commands/snapshot')(action, name, opts));
 
+// Default commander parsing
 program.parse();

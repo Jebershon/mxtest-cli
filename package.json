@@ -11,10 +11,13 @@
     "node": ">=14"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "postinstall": "npx playwright install"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["mendix","playwright","cli"],
+  "keywords": [
+    "mendix",
+    "playwright",
+    "cli"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -23,15 +26,11 @@
     "chalk": "^4.0.0",
     "cli-progress": "^3.0.0",
     "commander": "^11.0.0",
-    "execa": "^5.0.0",
     "exceljs": "^4.3.0",
+    "execa": "^5.0.0",
     "fs-extra": "^11.0.0",
     "inquirer": "^8.0.0",
     "ora": "^5.0.0",
     "pg": "^8.10.0"
-  },
-  "devDependencies": {
-    "@playwright/test": "^1.42.0",
-    "playwright": "^1.42.0"
   }
 }

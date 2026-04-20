@@ -8,23 +8,32 @@ const claudeRunner = require('../utils/claudeRunner');
 const specParser = require('../utils/specParser');
 const generateReporter = require('../utils/generateReporter');
 const validator = require('../utils/validator');
+const { runPlaywrightCmd } = require('../utils/playwrightHelper');
 
 module.exports = function(program) {
   program
-    .command('generate testcase')
+    .command('generate')
     .description('Generate Playwright test cases using Claude')
     .option('--page <name>')
+    .option('--flow <name>')
     .option('--output <dir>')
     .option('--dry-run')
     .option('--skill <path>')
+    .option('--mock <path>')
     .action(async (opts = {}) => {
       try {
         // STEP 1 - Preflight
-        const cl = await validator.checkClaudeCode();
-        if (!cl.ok) {
-          logger.error(cl.message || 'Claude validation failed');
-          logger.info('Run mxtest doctor to check all dependencies.');
-          process.exit(1);
+        // If using --mock, skip the external Claude CLI check
+        let cl;
+        if (opts.mock) {
+          cl = { ok: true, version: 'mock' };
+        } else {
+          cl = await validator.checkClaudeCode();
+          if (!cl.ok) {
+            logger.error(cl.message || 'Claude validation failed');
+            logger.info('Run mxtest doctor to check all dependencies.');
+            process.exit(1);
+          }
         }
 
         const cfgPath = configManager.CONFIG_FILE;
@@ -62,118 +71,92 @@ module.exports = function(program) {
         const pagesVal = opts.page ? opts.page : (projectContext.pages || []).join(',');
         finalPrompt = finalPrompt.replace(/__PAGES__/g, pagesVal);
 
-        // STEP 5 - Claude Execution
+        // STEP 5 - Claude Execution (support --mock to use local file for testing)
         const spinClaude = ui.startSpinner('Asking Claude to generate test cases...');
-        const claudeRes = await claudeRunner.run(finalPrompt);
-        if (!claudeRes.ok) {
-          spinClaude.fail('Claude generation failed');
-          logger.error(claudeRes.message || 'Claude returned an error');
-          process.exit(1);
+        let claudeRes;
+        if (opts.mock) {
+          try {
+            const mockPath = path.isAbsolute(opts.mock) ? opts.mock : path.resolve(process.cwd(), opts.mock);
+            if (!await fs.pathExists(mockPath)) {
+              spinClaude.fail('Mock file not found');
+              logger.error('Mock file not found: ' + mockPath);
+              process.exit(1);
+            }
+            const content = await fs.readFile(mockPath, 'utf8');
+            claudeRes = { ok: true, output: content };
+            spinClaude.succeed('Used mock file for generation');
+          } catch (e) {
+            spinClaude.fail('Mock read failed');
+            logger.error('Failed to read mock file: ' + String(e));
+            process.exit(1);
+          }
+        } else {
+          try {
+            claudeRes = await claudeRunner.run(finalPrompt);
+          } catch (e) {
+            spinClaude.fail('Claude generation failed');
+            logger.error('Claude runner error: ' + String(e));
+            process.exit(1);
+          }
+          if (!claudeRes.ok) {
+            spinClaude.fail('Claude generation failed');
+            logger.error(claudeRes.message || 'Claude returned an error');
+            process.exit(1);
+          }
+          spinClaude.succeed('Claude finished generating');
         }
-        spinClaude.succeed('Claude finished generating');
 
         // STEP 6 - Parse Output
-        const specs = specParser.extract(claudeRes.output || claudeRes.stdout || '');
+        let specs;
+        try {
+          specs = specParser.extract(claudeRes.output || claudeRes.stdout || '');
+        } catch (e) {
+          spinClaude.fail('Failed to parse Claude output');
+          logger.error('Failed to parse Claude output: ' + String(e));
+          logger.info('Raw Claude output preview:\n' + ((claudeRes && (claudeRes.output || claudeRes.stdout)) ? String(claudeRes.output || claudeRes.stdout).slice(0,2000) : '<empty>'));
+          process.exit(1);
+        }
         if (!specs || specs.length === 0) {
           logger.warn('Claude did not return any test files. Try again or use --skill to refine the prompt.');
           process.exit(1);
         }
 
-        // STEP 7 - Write Files
-        const outputDir = opts.output ? path.resolve(process.cwd(), opts.output) : (cfg.testDir ? path.resolve(process.cwd(), cfg.testDir) : path.resolve(process.cwd(), 'tests'));
-        const results = [];
-        if (!opts['dry-run']) await fs.ensureDir(outputDir);
+        // STEP 7 - Write Files (to tests/generated)
+        const isDryRun = !!(opts.dryRun || opts['dry-run']);
+        const cwd = process.cwd();
+        const autoDetect = require('../utils/autoDetect');
+        const dirs = await autoDetect.ensureTestDirs(cwd);
+        const defaultGenDir = dirs.generated;
+        const genDir = opts.output ? path.resolve(cwd, opts.output) : defaultGenDir;
+        if (!isDryRun) await fs.ensureDir(genDir);
 
+        const results = [];
         for (const s of specs) {
-          const target = path.join(outputDir, s.filename);
-          const pagesCovered = (projectContext.pages || []).filter(p => s.filename.toLowerCase().includes(p.toLowerCase()));
-          if (opts['dry-run']) {
-            logger.info('==== ' + s.filename + ' ===');
+          // choose filename: prefer provided flow or parser filename
+          const baseName = opts.flow ? `${opts.flow}.spec.js` : s.filename || `generated-${Date.now()}.spec.js`;
+          const target = path.join(genDir, baseName);
+          const pagesCovered = (projectContext.pages || []).filter(p => baseName.toLowerCase().includes(p.toLowerCase()));
+          if (isDryRun) {
+            logger.info('==== ' + baseName + ' ===');
             logger.info(s.code);
-            results.push({ filename: s.filename, status: 'generated', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
+            results.push({ filename: baseName, status: 'generated', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
             continue;
           }
           const exists = await fs.pathExists(target);
           if (exists) {
-            logger.warn('Skipping existing file: ' + s.filename);
-            results.push({ filename: s.filename, status: 'skipped', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
+            logger.warn('Skipping existing file: ' + baseName);
+            results.push({ filename: baseName, status: 'skipped', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
             continue;
           }
           await fs.writeFile(target, s.code, 'utf8');
-          logger.success('Generated: ' + s.filename);
-          results.push({ filename: s.filename, status: 'generated', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
+          logger.success('Generated: ' + baseName);
+          results.push({ filename: baseName, status: 'generated', pagesCovered: pagesCovered.length ? pagesCovered : (opts.page ? [opts.page] : []) });
         }
 
-        // STEP 8 - Run Tests
-        let testResults = { totalPassed: 0, totalFailed: 0, totalSkipped: 0, duration: '0s', tests: [] };
-        if (!opts['dry-run']) {
-          const spinRun = ui.startSpinner('Running generated tests...');
-          try {
-            const { execa } = require('execa');
-            const res = await execa('npx', ['playwright', 'test', outputDir, '--reporter=json'], { cwd: process.cwd(), stdio: 'pipe' });
-            // try parse JSON
-            try {
-              const parsed = JSON.parse(res.stdout);
-              // Build a simple normalized testResults if possible
-              if (parsed) {
-                // best-effort parsing
-                const tests = [];
-                if (Array.isArray(parsed)) {
-                  parsed.forEach((t) => {
-                    if (t && t.tests) {
-                      t.tests.forEach(tt => tests.push(tt));
-                    }
-                  });
-                }
-                testResults = { totalPassed: parsed.stats ? parsed.stats.passed || 0 : 0, totalFailed: parsed.stats ? parsed.stats.failed || 0 : 0, totalSkipped: parsed.stats ? parsed.stats.skipped || 0 : 0, duration: parsed.stats ? (parsed.stats.duration || '0s') : '0s', tests: tests };
-              }
-            } catch (e) {
-              // ignore parse error, assume success when exit code is 0
-              testResults = { totalPassed: 0, totalFailed: 0, totalSkipped: 0, duration: '0s', tests: [] };
-            }
-            spinRun.succeed('Tests completed');
-          } catch (err) {
-            // test failures or execution error
-            const stdout = (err && err.stdout) ? err.stdout : '';
-            try {
-              const parsed = stdout ? JSON.parse(stdout) : null;
-              if (parsed && parsed.stats) {
-                testResults = { totalPassed: parsed.stats.passed || 0, totalFailed: parsed.stats.failed || 0, totalSkipped: parsed.stats.skipped || 0, duration: parsed.stats.duration || '0s', tests: [] };
-              }
-            } catch (e) {
-              // ignore
-            }
-            // stop the spinner before printing
-            try { spinRun.fail('Playwright failed'); } catch (e) {}
-            logger.error(err.stderr || err.message || 'Playwright run failed');
-          }
-        }
-
-        // STEP 9 - Generate Report
-        if (!opts['dry-run']) {
-          const ts = new Date().toISOString().replace(/[:.]/g, '-');
-          const reportRoot = path.join(process.cwd(), cfg.reportDir || '.mxtest/test-results', `generate-${ts}`);
-          await fs.ensureDir(reportRoot);
-          const htmlPath = path.join(reportRoot, 'report.html');
-          const xlsxPath = path.join(reportRoot, 'test-report.xlsx');
-          await generateReporter.buildHTML(projectContext, results, testResults, htmlPath);
-          await generateReporter.buildExcel(projectContext, results, testResults, xlsxPath);
-
-          // open report in default browser
-          try {
-            const openCmd = process.platform === 'win32' ? 'start' : (process.platform === 'darwin' ? 'open' : 'xdg-open');
-            const { execa } = require('execa');
-            execa(openCmd, [htmlPath], { stdio: 'ignore', detached: true });
-          } catch (e) {
-            // ignore open failures
-          }
-
-          // STEP 10 - Terminal Summary
-          const summaryLine = `✔ ${testResults.totalPassed || 0} passed  ✗ ${testResults.totalFailed || 0} failed  ⚠ ${testResults.totalSkipped || 0} skipped  ⏱ ${testResults.duration || '0s'}`;
-          logger.success(summaryLine);
-          logger.box(` ${results.filter(r=>r.status==='generated').length} test files generated.\n Report: ${path.relative(process.cwd(), htmlPath)}\n Excel:  ${path.relative(process.cwd(), xlsxPath)} `);
-        } else {
+        if (isDryRun) {
           logger.success('Dry-run complete. No files written.');
+        } else {
+          logger.success(`${results.filter(r=>r.status==='generated').length} test files written to ${genDir}`);
         }
 
       } catch (err) {

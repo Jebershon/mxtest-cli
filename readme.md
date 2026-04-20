@@ -1,19 +1,18 @@
 # mxtest-cli
 
-Mendix + Playwright testing CLI. This tool helps build Mendix docker artifacts, start containers, run Playwright tests and produce HTML reports. It also provides robust PostgreSQL snapshot/save/restore helpers that work when the DB runs inside Docker Compose.
+Mendix + Playwright testing CLI — build Mendix docker artifacts, start a local stack, run Playwright tests, and manage DB snapshots. Includes an AI-driven test-generation flow (`mxtest generate`) that can produce Playwright specs from a project scan and a skill template.
 
-## Features
-- Verify environment (mxcli, Docker, Playwright)
-- Initialize a test folder with a sample Playwright test (now under `.mxtest/tests` by default)
-- Build Mendix Docker artifacts and prepare `.docker`
-- Start/stop the project's docker compose stack
-- Run Playwright tests and generate HTML reports (reports saved under `.mxtest/test-results`)
-- Manage `mxtest.config.json` settings
-- Save/restore PostgreSQL snapshots that work for DB-in-container and external DB workflows
+## Key features
+- Environment checks (`mxtest doctor`) for required tools
+- Project initialization and sample tests (`mxtest init`)
+- Build and run Mendix Docker artifacts (`mxtest build`, `mxtest run`, `mxtest run-build`)
+- Run Playwright tests and generate HTML reports (`mxtest test`, `mxtest report`)
+- DB snapshot/save/restore helpers that work for in-container and external Postgres
+- AI-driven test generation: `mxtest generate` (uses a skill template; supports `--mock` and `--dry-run`)
 
 ## Installation
 
-Install dependencies and link the CLI (development):
+Install dependencies and link the CLI for local development:
 
 ```powershell
 cd C:\Projects\custom-cli\mxtest-cli
@@ -23,184 +22,94 @@ npm link
 
 After `npm link` the `mxtest` command will be available globally.
 
-## Commands
+## Primary commands (short)
 
-Primary commands and short notes:
+- `mxtest doctor` — verify required tools (mxcli, Docker, Playwright).
+- `mxtest init` — create `.mxtest` scaffolding and a sample test.
+- `mxtest build [clientPort] [postgresPort]` — run `mxcli docker build` and prepare `.docker`.
+- `mxtest run` — start the prepared `.docker` compose stack.
+- `mxtest run-build [--no-wait]` — force rebuild and run the stack.
+- `mxtest test [options]` — run Playwright tests (`--path`,`--url`,`--headed`,`--browser`,`--retry`,`--ci`,`--no-report`).
+- `mxtest report` — open the latest HTML report.
+- `mxtest down` — stop the docker compose stack.
+- `mxtest status` — show container status.
+- `mxtest logs [--tail N] [--follow]` — view compose logs.
+- `mxtest config [show|set]` — view/update `mxtest.config.json`.
+- `mxtest generate` — AI-powered test generation (see below).
+- `mxtest codegenerate [url]` — launch Playwright recorder and save a generated script to a file (use `--output` to set destination).
+- `mxtest snapshot [save|list|restore]` — manage DB snapshots.
+ - `mxtest debug [target]` — run Playwright in interactive inspector/debug mode (sets `PWDEBUG=1`). Use `target` to specify a file or folder (defaults to `tests`).
 
-- `mxtest doctor` — verify required tools (mxcli, docker, playwright).
-- `mxtest init` — initialize testing scaffolding (detects `.mpr`, creates `.mxtest/tests/sample.spec.js` by default and ensures `.mxtest/config.json`).
-- `mxtest build [clientPort] [postgresPort]` — run `mxcli docker build` and prepare `.docker` (writes `.docker/.env` and `.docker/docker-compose.yml` from templates when appropriate).
-- `mxtest run` — start the prepared `.docker` compose stack. This command expects local build artifacts (a `.docker/build` folder and `.docker/docker-compose.yml`) produced by `mxtest build`. It will run `docker compose up -d` in `.docker`. If a port conflict occurs it calls `docker compose down` then retries `up -d` once.
-- `mxtest run-build [--no-wait]` — force a clean rebuild: stops any existing stack, removes `.docker`, runs `mxtest build`, builds local images (`docker compose build`) and starts the stack (`docker compose up -d`). On subsequent runs when an internal Postgres is used the command will automatically save a baseline snapshot (to `.mxtest/snapshots`) before teardown and attempt to restore it after `docker compose up` to preserve data across rebuild cycles.
-- `mxtest test [options]` — run Playwright tests (supports `--path`, `--url`, `--headed`, `--browser`, `--retry`, `--ci`, `--no-report`). Reports and parsed results are written to `.mxtest/test-results/<timestamp>/`.
-- `mxtest result` — open/show the last Playwright report.
-- `mxtest down` — stop the docker compose stack in `.docker`.
-- `mxtest status` — show container status for the stack.
-- `mxtest logs [--tail N] [--follow]` — show docker compose logs.
-- `mxtest config [show|set]` — view or update `mxtest.config.json` (allowed keys: `testDir`, `appUrl`, `clientPort`, `postgresPort`, `waitTimeout`, `image`).
-- `mxtest playwright [...args]` — pass-through to `npx playwright`.
+## AI-driven test generation (`mxtest generate`)
 
-### Database & snapshots
+The `generate` command can produce Playwright test files from a project scan using a skill template. By default it uses `src/skills/playwright.skill.md`. For complex UIs (data grids, nested widgets, modals, iframes) use the specialized `src/skills/playwright-complex-ui.skill.md`.
 
-The CLI supports both internal (Compose-provided) and external PostgreSQL configurations and provides robust snapshot tooling that works when the DB is inside Docker Compose. The tool stores per-project state under a hidden `.mxtest/` folder in the project root. That folder contains:
+Options:
+- `--skill <path>` — path to a skill template (defaults to `src/skills/playwright.skill.md`).
+- `--mock <path>` — use a local mock file instead of calling Claude (for offline testing).
+- `--dry-run` — parse and print generated specs without writing files.
+- `--flow <name>` — name the generated flow (used for filenames).
+- `--page <name>` — limit generation to a single page.
+- `--output <dir>` — output directory (defaults to the configured `testDir` or `tests/generated`).
 
-- `.mxtest/config.json` — DB mode and connection info
-- `.mxtest/.env` — stored DB password (used at runtime)
-- `.mxtest/snapshots/` — canonical snapshots (`.backup`) and a single overwritten safety copy in `.mxtest/snapshots/sql/` (`<name>.sql`)
-
-Snapshot behavior and commands:
-
-- Default snapshot format: `.backup` (pg_dump -Fc). When a `.backup` is created the CLI also writes a single overwritten plain SQL safety copy at `.mxtest/snapshots/sql/<name>.sql` to ease inspection and simple restores.
-Note: The `mxtest db` command has been removed. Manage external PostgreSQL instances with your preferred DB tools. If you want `mxtest run-build` to inject external DB settings, add the connection info to `.mxtest/config.json` or create a `.docker/docker-compose.mxtest.override.yml` manually.
-
-- `mxtest snapshot save <name>` — save a snapshot to `.mxtest/snapshots/<name>.backup` (default) or `.sql` when requested.
-- `mxtest snapshot list` — list available snapshots.
-- `mxtest snapshot restore <name>` — restore a snapshot (prefers `.backup` if both exist).
-
-In-container snapshot (internal DB only):
-
-- Use `mxtest snapshot save <name>` to create a snapshot from the Postgres database running inside your project's Docker Compose (only when the project DB mode is internal).
-- The command runs `pg_dump` inside the DB container, copies the resulting `.backup` to `.mxtest/snapshots/<name>.backup`, and attempts to write a plain SQL safety copy to `.mxtest/snapshots/sql/<name>.sql`.
-- Example:
+Examples:
 
 ```powershell
-mxtest snapshot save baseline
-# produces .mxtest\snapshots\baseline.backup
-# and (when possible) .mxtest\snapshots\sql\baseline.sql
+# dry-run with a mock Claude output
+mxtest generate --output .mxtest/tests --dry-run --mock dev-resources/mock-claude-output.txt
+
+# generate using the complex-UI skill and write to tests/generated
+mxtest generate --skill src/skills/playwright-complex-ui.skill.md --output tests/generated --flow order-management
 ```
-
-Note: `mxtest snapshot save` will refuse to run when your project is configured to use an external DB (see `.mxtest/config.json`).
-
-Implementation notes and fallbacks:
-
-- The CLI uses the system Postgres client tools (`pg_dump`, `pg_restore`/`psql`) rather than a Node `pg` dependency. Ensure those CLIs are available on PATH for snapshot operations.
-- When the database runs inside Docker Compose the snapshot manager will attempt, in order:
-	1. Native host calls to `pg_dump`/`psql` (when host can reach the DB),
-	2. `docker compose exec <db>` streaming with environment injection (preferred for containerized DB),
-	3. `docker run` with the official Postgres image as a last-resort fallback.
-- These fallbacks improve reliability when containers change network namespaces or credentials.
 
 Notes:
+- Skill templates are Markdown files that instruct the AI to emit only fenced JavaScript code blocks where the first line of each block is `// FILE: <filename>.spec.js`.
+- Always review generated specs before running them. Generated tests are a starting point and may need project-specific selectors or test-data setup.
 
-- Snapshot restore is destructive — it will overwrite the target database. Use with caution.
-- Treat `.mxtest` as local project secrets and add it to `.gitignore` where appropriate.
+## Skill templates
 
-### How run-build uses the DB config
+Two bundled skills are included:
 
-`mxtest run-build` detects whether your project is configured to use an external database (via `.mxtest/config.json`). If an external DB is configured the CLI will:
+- `src/skills/playwright.skill.md` — general-purpose Playwright test template (login, navigation, simple forms).
+- `src/skills/playwright-complex-ui.skill.md` — advanced templates and patterns for complex widgets (data grids, nested forms, modals, iframes, file uploads).
 
-- write a temporary compose override (`.docker/docker-compose.mxtest.override.yml`) that injects the external DB connection into the Mendix service environment variables (so the runtime connects to your external Postgres), and
-- scale down the local `db` service (so local Postgres is not started by compose).
+Skill templates use placeholders:
 
-This means you can run the same `mxtest run-build` workflow whether you use the bundled Postgres or an external DB.
+- `__PROJECT_CONTEXT__` — JSON summary of pages, widgets, and existing tests returned by the project scanner.
+- `__EXISTING_TESTS__` — comma-separated list of existing test filenames (so AI avoids duplication).
+- `__PAGES__` — comma-separated list of pages the generator should target.
 
-### Using snapshots when testing
+To use a custom skill file, pass `--skill` to `mxtest generate` with the path to your template.
 
-You can restore a snapshot before running tests:
+## Quick Playwright flows
 
-```powershell
-mxtest snapshot restore baseline
-mxtest run-build
-mxtest test --snapshot baseline
-```
-
-`mxtest test` also accepts `--snapshot <name>`; when specified the CLI will restore the snapshot automatically before running the tests.
-
-## Quick workflow (with DB + snapshots)
-
-1. If using an external DB (one-time per project):
+Record a quick script (recorder) and save it to `tests/auto`:
 
 ```powershell
-# Configure your external Postgres with your preferred tools,
-# then add its connection info to .mxtest/config.json or create
-# a .docker/docker-compose.mxtest.override.yml so `mxtest run-build`
-# can inject the settings into the Mendix service.
+mxtest record --output tests/auto --url http://localhost:8080
 ```
 
-2. Save a baseline snapshot (recommended before disruptive changes):
+Run tests (example):
 
 ```powershell
-mxtest snapshot save baseline
+mxtest test --path tests --url http://localhost:8080 --browser chromium --headed
 ```
 
-3. Rebuild and start (for internal DBs the CLI auto-saves/restores baseline across rebuilds):
+Open the most recent test report:
 
 ```powershell
-mxtest run-build
+mxtest report
 ```
 
-4. Run tests using a snapshot (the CLI can auto-restore when `--snapshot` is provided):
+## Snapshots and DB notes
 
-```powershell
-mxtest test --snapshot baseline
-```
+The snapshot system uses `pg_dump`/`pg_restore` (or `psql`) and prefers native host tools when available. When Postgres runs inside Docker Compose the snapshot manager will attempt `docker compose exec` streaming and fall back to `docker run` with the Postgres image.
 
-## Security and notes
+## Contributing to skill templates
 
-- `.mxtest/.env` contains the DB password in plain text for convenience; consider using OS keychains, encrypted stores, or CI secrets for production workflows.
-- Snapshot restore is destructive — it will overwrite the target database. Use with caution.
-
-
-Notes:
-- `mxtest run` intentionally does not attempt to pull remote images. It expects `mxtest build` (or `run-build`) to produce local build artifacts, and will use those local images. If you intentionally want to use a remote image instead of local artifacts, set `image` in `mxtest.config.json` or run a custom compose.
-- `mxtest run-build` will try to stop any prior stack and remove local images created by that stack before rebuilding to avoid stale image/container issues.
-
-## Quick workflow
-
-1. Build artifacts:
-
-```powershell
-mxtest build 8080 5432
-```
-
-2. Start the prepared stack (uses local build artifacts):
-
-```powershell
-mxtest run
-```
-
-3. Or force rebuild and restart:
-
-```powershell
-mxtest run-build
-```
-
-4. Run Playwright tests:
-
-```powershell
-mxtest test
-```
-
-## Configuration
-
-The CLI stores settings in `mxtest.config.json` at the project root. To view:
-
-```powershell
-mxtest config show
-```
-
-To update a setting:
-
-```powershell
-mxtest config set <key> <value>
-# example:
-mxtest config set clientPort 9090
-```
-
-Allowed keys: `testDir`, `appUrl`, `clientPort`, `postgresPort`, `waitTimeout`, `image`.
-
-## Templates
-
-Templates are under `src/templates/` and are used to create `.env`, `.docker/docker-compose.yml`, and a sample test file during `mxtest init` or `mxtest build`.
-
-## Development
-
-- Node.js (CommonJS) only
-- Dependencies are defined in `package.json`
-
-## Contributing
-
-Open a PR on the repository and include tests for new features.
+- Skill templates are plain Markdown files under `src/skills/`.
+- When editing skills, keep the `Output Rules` (only fenced JS blocks) so the CLI's parser can reliably extract generated files.
+- Add examples and edge cases (e.g., pagination, virtual lists, file uploads) to the complex-UI skill to improve generation quality.
 
 ---
-Updated README to reflect current CLI commands and behavior.
+Updated: added AI-driven generation documentation and complex-UI skill guidance.

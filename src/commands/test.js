@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const ui = require('../utils/ui');
-const execa = require('execa');
+const { runPlaywrightCmd } = require('../utils/playwrightHelper');
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 const reportGenerator = require('../utils/reportGenerator');
@@ -44,8 +44,8 @@ module.exports = async function testCmd(options = {}) {
       logger.warn('Continuing to run tests; they may fail if app is down');
     }
 
-    // run playwright test
-    const args = ['playwright', 'test', testDir, '--reporter=json'];
+    // run playwright test (use local-resolution helper)
+    const args = ['test', testDir, '--reporter=json'];
     if (opts.headed) args.push('--headed');
     if (opts.browser) args.push('--project=' + opts.browser);
     if (opts.retry) args.push('--repeat-each=' + String(opts.retry));
@@ -53,11 +53,14 @@ module.exports = async function testCmd(options = {}) {
     const spin = ui.startSpinner('Running Playwright tests');
     let res;
     try {
-      res = await execa('npx', args);
+      // capture stdout so we can parse the JSON reporter
+      res = await runPlaywrightCmd(args, { captureStdout: true, env: { APP_URL: url } });
       spin.succeed('Playwright finished');
     } catch (err) {
       // Playwright returns non-zero on failures; capture stdout if present
-      res = err;
+      // If our helper throws, err may be an execa error or aggregated error.
+      // If it is an execa error, reuse it so downstream parsing can use stdout.
+      res = err && err.stdout ? err : err;
       spin.succeed('Playwright finished with failures');
     }
 
@@ -100,9 +103,18 @@ module.exports = async function testCmd(options = {}) {
     logger.success(`✔ ${passed} passed  ✖ ${failed} failed  ⚠ ${skipped} skipped  ⏱ ${Math.round(duration)}ms`);
 
     if (!opts.ci && !opts.noReport) {
-      // open report
+      // open the generated HTML report directly (avoid Playwright show-report passthrough)
       try {
-        await execa('npx', ['playwright', 'show-report', outDir], { stdio: 'inherit' });
+        const execa = require('execa');
+        const toOpen = reportPath;
+        if (process.platform === 'win32') {
+          const safe = String(toOpen).replace(/"/g, '\\"');
+          await execa.command(`cmd /c start "" /B "${safe}"`, { shell: true, windowsHide: true, stdio: 'ignore' });
+        } else if (process.platform === 'darwin') {
+          await execa('open', [toOpen], { stdio: 'ignore' });
+        } else {
+          await execa('xdg-open', [toOpen], { stdio: 'ignore' });
+        }
       } catch (err) {
         logger.warn('Could not open report automatically');
       }

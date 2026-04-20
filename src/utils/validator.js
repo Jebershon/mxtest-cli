@@ -22,10 +22,36 @@ async function checkDocker() {
 
 async function checkPlaywright() {
   try {
-    const res = await execa('npx', ['playwright', '--version']);
-    return { ok: true, version: res.stdout.trim() };
+    // Prefer resolving local installed package rather than invoking the CLI
+    try {
+      const pkgPath = require.resolve('playwright/package.json', { paths: [process.cwd()] });
+      const pkg = require(pkgPath);
+      // check browsers availability
+      const browsersOk = await _checkPlaywrightBrowsers();
+      if (!browsersOk) return { ok: false, message: 'Playwright installed but browsers (chromium) not available. Run `npx playwright install chromium` or run the interactive doctor to install.', needsBrowsers: true, version: pkg.version };
+      return { ok: true, version: pkg.version };
+    } catch (e) {
+      const pkgPath = require.resolve('@playwright/test/package.json', { paths: [process.cwd()] });
+      const pkg = require(pkgPath);
+      const browsersOk = await _checkPlaywrightBrowsers();
+      if (!browsersOk) return { ok: false, message: 'Playwright installed but browsers (chromium) not available. Run `npx playwright install chromium` or run the interactive doctor to install.', needsBrowsers: true, version: pkg.version };
+      return { ok: true, version: pkg.version };
+    }
   } catch (err) {
-    return { ok: false, message: 'Playwright not installed. Run `npm install -D @playwright/test && npx playwright install`' };
+    return { ok: false, message: 'Playwright not installed as a project dependency. Run `npm install` in this project to install dependencies.' };
+  }
+}
+
+async function _checkPlaywrightBrowsers() {
+  // Attempt to launch a short-lived chromium instance to verify browsers are installed.
+  // If launch fails due to missing browsers, return false.
+  const execa = require('execa');
+  const script = `(async () => { try { const { chromium } = require('playwright'); const browser = await chromium.launch({ headless: true }); await browser.close(); console.log('ok'); process.exit(0);} catch (e) { console.error(e && e.message ? e.message : String(e)); process.exit(2);} })();`;
+  try {
+    await execa(process.execPath, ['-e', script], { cwd: process.cwd(), timeout: 20000 });
+    return true;
+  } catch (err) {
+    return false;
   }
 }
 

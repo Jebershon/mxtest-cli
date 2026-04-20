@@ -3,6 +3,7 @@ const ui = require('../utils/ui');
 const inquirer = require('inquirer');
 const validator = require('../utils/validator');
 const logger = require('../utils/logger');
+const execa = require('execa');
 
 module.exports = async function doctor(opts = {}) {
   // opts.exitOnFailure: when true (default) doctor will call process.exit(1) on failures.
@@ -43,6 +44,25 @@ module.exports = async function doctor(opts = {}) {
         // interactive re-check loop: show install guidance and let user install then re-check
         const guidance = boxen(res.message || 'See installation instructions for ' + c.name, { padding: 1, borderStyle: 'round', borderColor: 'yellow' });
         console.log(guidance);
+
+        // Special case: if Playwright package exists but browsers missing, offer to install chromium now
+        if (c.name === 'playwright' && res && res.needsBrowsers) {
+          try {
+            const pick = await inquirer.prompt([{ type: 'list', name: 'action', message: 'Playwright browsers appear missing. What would you like to do?', choices: [ { name: 'Attempt to install Chromium now (npx playwright install chromium)', value: 'install' }, { name: 'I will install manually later', value: 'skip' } ], default: 'install' }]);
+            if (pick.action === 'install') {
+              const spinInstall = ui.startSpinner('Running `npx playwright install chromium` (this may download browser binaries)');
+              try {
+                await execa('npx', ['playwright', 'install', 'chromium'], { stdio: 'inherit', cwd: process.cwd() });
+                spinInstall.succeed('Playwright Chromium installed');
+              } catch (installErr) {
+                spinInstall.fail('Playwright install failed');
+                logger.error('Playwright install failed: ' + String(installErr.message || installErr));
+              }
+            }
+          } catch (promptErr) {
+            logger.warn('Playwright install prompt interrupted: ' + String(promptErr));
+          }
+        }
 
         let tryAgain = true;
         while (tryAgain) {

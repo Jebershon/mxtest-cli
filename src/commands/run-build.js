@@ -9,6 +9,7 @@ const dbManager = require('../utils/dbManager');
 const snapshot = require('../utils/snapshotManager');
 const ui = require('../utils/ui');
 const orchestrator = require('../utils/snapshotOrchestrator');
+const dockerHelper = require('../utils/dockerHelper');
 
 module.exports = async function runBuild(opts = {}) {
   try {
@@ -39,14 +40,34 @@ module.exports = async function runBuild(opts = {}) {
       const existingCompose = path.join(dockerDir, 'docker-compose.yml');
       if (await fs.pathExists(existingCompose)) {
         logger.info('Detected existing .docker/docker-compose.yml — attempting to stop previous stack');
-        const spinDownOld = ui.startSpinner('Stopping previous docker compose stack (down -v --rmi local)...');
+
+        // Verify Docker daemon; on Windows try to auto-start Docker Desktop if needed
+        let dockerAvailable = true;
         try {
-          // try best-effort to stop and remove local images
-          await execa('docker', ['compose', 'down', '-v', '--rmi', 'local'], { cwd: dockerDir, stdio: 'inherit' });
-          spinDownOld.succeed('Previous compose stack stopped and local images removed');
-        } catch (err) {
-          spinDownOld.fail('Failed to fully stop previous compose stack — continuing with rebuild');
-          logger.warn(String(err));
+          await execa('docker', ['info']);
+        } catch (dockerErr) {
+          dockerAvailable = false;
+          try {
+            const started = await dockerHelper.startDockerDesktopIfWindows(dockerErr);
+            if (started) dockerAvailable = true;
+          } catch (e) {
+            // ignore helper errors
+          }
+        }
+
+        if (!dockerAvailable) {
+          logger.warn('Docker daemon not reachable. Skipping attempt to stop previous compose stack to avoid blocking the rebuild.');
+          logger.info('Start Docker Desktop, then run: `mxtest run-build --resume` or `mxtest run` to continue.');
+        } else {
+          const spinDownOld = ui.startSpinner('Stopping previous docker compose stack (down -v --rmi local)...');
+          try {
+            // try best-effort to stop and remove local images
+            await execa('docker', ['compose', 'down', '-v', '--rmi', 'local'], { cwd: dockerDir, stdio: 'inherit' });
+            spinDownOld.succeed('Previous compose stack stopped and local images removed');
+          } catch (err) {
+            spinDownOld.fail('Failed to fully stop previous compose stack — continuing with rebuild');
+            logger.warn(String(err));
+          }
         }
       }
 
@@ -81,18 +102,28 @@ module.exports = async function runBuild(opts = {}) {
     // Ensure compose file exists; if build didn't produce it, attempt to generate defaults from templates
     if (!require('fs').existsSync(composePath)) {
       logger.warn('.docker/docker-compose.yml not found after build. Attempting to generate from templates as a fallback.');
-      try {
-        await fs.ensureDir(dockerDir);
-        // create .env if missing
-        const envDest = path.join(dockerDir, '.env');
-        if (!await fs.pathExists(envDest)) {
+      await fs.ensureDir(dockerDir);
+      // create .env if missing (try template, fallback to inline)
+      const envDest = path.join(dockerDir, '.env');
+      if (!await fs.pathExists(envDest)) {
+        try {
           const template = await fs.readFile(path.join(__dirname, '..', 'templates', '.env.txt'), 'utf8');
           const content = template.replace(/{{CLIENT_PORT}}/g, String(cfg.clientPort || 8080)).replace(/{{POSTGRES_PORT}}/g, String(cfg.postgresPort || 5432));
           await fs.writeFile(envDest, content, 'utf8');
           logger.info('Wrote fallback .env into .docker');
+        } catch (err) {
+          const inline = `APP_PORT=${cfg.clientPort || 8080}\nPOSTGRES_PORT=${cfg.postgresPort || 5432}\nAPP_URL=http://localhost:${cfg.clientPort || 8080}\n`;
+          try {
+            await fs.writeFile(envDest, inline, 'utf8');
+            logger.warn('Failed to read .env template; wrote inline fallback .env into .docker');
+          } catch (err2) {
+            logger.warn('Failed to write fallback .env: ' + String(err2));
+          }
         }
+      }
 
-        // create docker-compose.yml from template
+      // create docker-compose.yml from template (or inline fallback)
+      try {
         const tmpl = await fs.readFile(path.join(__dirname, '..', 'templates', 'docker-compose.yml.txt'), 'utf8');
         const image = (cfg && cfg.image) ? String(cfg.image) : 'mendix/custom-app:latest';
         let content = tmpl.replace(/{{CLIENT_PORT}}/g, String(cfg.clientPort || 8080)).replace(/{{POSTGRES_PORT}}/g, String(cfg.postgresPort || 5432));
@@ -109,9 +140,16 @@ module.exports = async function runBuild(opts = {}) {
         await fs.writeFile(composePath, content, 'utf8');
         logger.info('Wrote fallback docker-compose.yml into .docker');
       } catch (err) {
-        logger.error('.docker/docker-compose.yml not found after build and fallback generation failed. Aborting.');
-        logger.error(String(err));
-        process.exit(1);
+        logger.warn('.docker/docker-compose.yml template read failed; writing minimal inline compose as fallback: ' + String(err));
+        const image = (cfg && cfg.image) ? String(cfg.image) : 'mendix/custom-app:latest';
+        const inlineCompose = `services:\n  mendix:\n    image: ${image}\n    ports:\n      - "${cfg.clientPort || 8080}:8080"\n  db:\n    image: postgres:17-alpine\n    ports:\n      - "${cfg.postgresPort || 5432}:5432"\n`;
+        try {
+          await fs.writeFile(composePath, inlineCompose, 'utf8');
+          logger.info('Wrote minimal fallback docker-compose.yml into .docker');
+        } catch (err2) {
+          logger.error('Failed to write minimal fallback docker-compose.yml: ' + String(err2));
+          process.exit(1);
+        }
       }
     }
 
@@ -148,14 +186,46 @@ module.exports = async function runBuild(opts = {}) {
 
       const hasDockerfile = await containsMatchingFile(buildOutputDir, (name) => /^dockerfile$/i.test(name));
       // check for any yaml anywhere under .docker (build outputs sometimes land there)
-      const hasYaml = await containsMatchingFile(dockerDir, (name) => /\.ya?ml$/i.test(name));
+      let hasYaml = await containsMatchingFile(dockerDir, (name) => /\.ya?ml$/i.test(name));
 
       if (!hasDockerfile && !hasYaml) {
-        // No mxcli docker artifacts were produced. Abort before attempting `docker compose up` which will try to pull a non-existent image.
-        logger.error('No Docker artifacts were produced by mxcli (no Dockerfile or docker-compose YAML found under .docker).');
-        logger.info('Either enable Docker output in your Mendix project/mxcli, or provide a prebuilt image in mxtest.config.json/docker-compose.');
-        logger.info('Skipping docker compose up to avoid pulling a missing image.');
-        process.exit(1);
+        // No mxcli docker artifacts were produced. Rather than aborting,
+        // generate minimal fallback compose/.env so the run flow can proceed.
+        logger.warn('No Docker artifacts were produced by mxcli (no Dockerfile or docker-compose YAML found under .docker). Generating minimal fallback compose to continue.');
+        try {
+          await fs.ensureDir(dockerDir);
+          // write .env (try template then inline)
+          const envDest = path.join(dockerDir, '.env');
+          try {
+            const template = await fs.readFile(path.join(__dirname, '..', 'templates', '.env.txt'), 'utf8');
+            const content = template.replace(/{{CLIENT_PORT}}/g, String(cfg.clientPort || 8080)).replace(/{{POSTGRES_PORT}}/g, String(cfg.postgresPort || 5432));
+            await fs.writeFile(envDest, content, 'utf8');
+            logger.info('Wrote fallback .env into .docker');
+          } catch (e) {
+            const inline = `APP_PORT=${cfg.clientPort || 8080}\nPOSTGRES_PORT=${cfg.postgresPort || 5432}\nAPP_URL=http://localhost:${cfg.clientPort || 8080}\n`;
+            await fs.writeFile(envDest, inline, 'utf8');
+            logger.info('Wrote inline fallback .env into .docker');
+          }
+
+          // write minimal docker-compose.yml
+          try {
+            const tmpl = await fs.readFile(path.join(__dirname, '..', 'templates', 'docker-compose.yml.txt'), 'utf8');
+            const image = (cfg && cfg.image) ? String(cfg.image) : 'mendix/custom-app:latest';
+            let content = tmpl.replace(/{{CLIENT_PORT}}/g, String(cfg.clientPort || 8080)).replace(/{{POSTGRES_PORT}}/g, String(cfg.postgresPort || 5432));
+            await fs.writeFile(composePath, content, 'utf8');
+            logger.info('Wrote fallback docker-compose.yml into .docker');
+            hasYaml = true;
+          } catch (e) {
+            const image = (cfg && cfg.image) ? String(cfg.image) : 'mendix/custom-app:latest';
+            const inlineCompose = `services:\n  mendix:\n    image: ${image}\n    ports:\n      - "${cfg.clientPort || 8080}:8080"\n  db:\n    image: postgres:17-alpine\n    ports:\n      - "${cfg.postgresPort || 5432}:5432"\n`;
+            await fs.writeFile(composePath, inlineCompose, 'utf8');
+            logger.info('Wrote minimal inline docker-compose.yml into .docker');
+            hasYaml = true;
+          }
+        } catch (e) {
+          logger.error('Failed to generate fallback docker artifacts: ' + String(e));
+          process.exit(1);
+        }
       }
 
     // Verify Docker daemon availability before attempting compose operations.
@@ -164,6 +234,12 @@ module.exports = async function runBuild(opts = {}) {
       await execa('docker', ['info']);
     } catch (err) {
       dockerAvailable = false;
+      try {
+        const started = await dockerHelper.startDockerDesktopIfWindows(err);
+        if (started) dockerAvailable = true;
+      } catch (e) {
+        // ignore helper errors and fall through to pending behavior
+      }
     }
 
     if (!dockerAvailable && !opts.resume) {
@@ -239,8 +315,25 @@ module.exports = async function runBuild(opts = {}) {
       try {
         await execa('docker', ['compose', 'build'], { cwd: dockerDir, stdio: 'inherit' });
       } catch (err) {
-        logger.error('docker compose build failed: ' + String(err));
-        process.exit(1);
+        const msg = (err && (err.stderr || err.message || err.stdout)) ? String(err.stderr || err.message || err.stdout) : '';
+        if (process.platform === 'win32' && /npipe:|dockerDesktopLinuxEngine|failed to connect to the docker api|The system cannot find the file specified/i.test(msg)) {
+          const started = await dockerHelper.startDockerDesktopIfWindows(err);
+          if (started) {
+            try {
+              logger.info('Retrying `docker compose build` after starting Docker Desktop...');
+              await execa('docker', ['compose', 'build'], { cwd: dockerDir, stdio: 'inherit' });
+            } catch (err2) {
+              logger.error('docker compose build failed after starting Docker Desktop: ' + String(err2));
+              process.exit(1);
+            }
+          } else {
+            logger.error('docker compose build failed: ' + String(err));
+            process.exit(1);
+          }
+        } else {
+          logger.error('docker compose build failed: ' + String(err));
+          process.exit(1);
+        }
       }
     }
 
@@ -305,9 +398,51 @@ module.exports = async function runBuild(opts = {}) {
       spinUp.fail('docker compose up failed');
       if (err.stderr) logger.error('docker compose stderr:\n' + String(err.stderr));
       if (err.stdout) logger.info('docker compose stdout:\n' + String(err.stdout));
-      // Detect image pull access denied and show actionable message
+
       const stderr = (err.stderr) ? String(err.stderr) : '';
-      if (/pull access denied for (\S+)/i.test(stderr)) {
+      const combinedMsg = stderr + (err.message ? '\n' + String(err.message) : '');
+
+      // If this looks like the Windows Docker Desktop npipe error, try to
+      // auto-start Docker Desktop and retry the `docker compose up` once.
+      if (process.platform === 'win32' && /npipe:|dockerDesktopLinuxEngine|failed to connect to the docker api|The system cannot find the file specified/i.test(combinedMsg)) {
+        const started = await dockerHelper.startDockerDesktopIfWindows(err);
+        if (started) {
+          try {
+            logger.info('Retrying `docker compose up` after starting Docker Desktop...');
+            const upArgs = upArgsBase.concat(extraArgs.length ? extraArgs : []);
+            await execa('docker', upArgs, { cwd: upCwd, stdio: 'inherit', env: extraEnv });
+            spinUp.succeed('Docker compose started');
+            // Run baseline restore logic (same as successful path)
+            try {
+              const dbCfgNow = dbManager.readConfig().db || {};
+              const isInternalNow = !dbCfgNow.mode || dbCfgNow.mode === 'internal';
+              if (isInternalNow) {
+                  const snaps = snapshot.list();
+                  const baselineFile = snaps.find(s => require('path').parse(s).name === 'baseline');
+                  if (baselineFile) {
+                    try {
+                      await orchestrator.restoreBaselineIfPresent(composePath, dockerDir);
+                    } catch (err) {
+                      logger.warn('Baseline restore failed: ' + String(err));
+                    }
+                  }
+              }
+            } catch (e) {
+              logger.warn('Snapshot restore check failed: ' + String(e));
+            }
+            // continue normal flow
+          } catch (err2) {
+            spinUp.fail('docker compose up failed after attempting to start Docker Desktop');
+            if (err2.stderr) logger.error('docker compose stderr:\n' + String(err2.stderr));
+            if (err2.stdout) logger.info('docker compose stdout:\n' + String(err2.stdout));
+            logger.error(String(err2));
+            process.exit(1);
+          }
+        } else {
+          logger.error('docker compose up failed: ' + String(err));
+          process.exit(1);
+        }
+      } else if (/pull access denied for (\S+)/i.test(stderr)) {
         const m = stderr.match(/pull access denied for (\S+)/i);
         const image = m ? m[1] : null;
         logger.error('docker compose failed because it could not pull image' + (image ? (': ' + image) : '') + '.');
@@ -315,10 +450,11 @@ module.exports = async function runBuild(opts = {}) {
         logger.info('- `docker login` to a registry that hosts the image');
         logger.info("- Set a valid image in your project's `mxtest.config.json` (key: 'image') and re-run `mxtest build`");
         logger.info('- Or configure your Mendix/mxcli build to produce Docker artifacts (Dockerfile/docker_compose) so the CLI can build the image locally');
+        process.exit(1);
       } else {
         logger.error(String(err));
+        process.exit(1);
       }
-      process.exit(1);
     }
 
     if (opts.noWait) {

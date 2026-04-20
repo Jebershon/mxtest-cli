@@ -1,0 +1,18 @@
+Here is a sample output from Claude for testing purposes.
+
+```javascript
+// FILE: sample.spec.js
+const { test, expect } = require('@playwright/test');
+
+// verifies that a sample page loads and has a title
+test('sample page loads and has a title', async ({ page }) => {
+  await page.goto(process.env.APP_URL || 'http://localhost:8080');
+  await expect(page).toHaveTitle(/./);
+});
+
+// verifies that missing element shows not found
+test('missing element shows not found', async ({ page }) => {
+  await page.goto(process.env.APP_URL || 'http://localhost:8080');
+  await expect(page.locator('#nonexistent')).toHaveCount(0);
+});
+```
