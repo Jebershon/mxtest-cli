@@ -13,7 +13,7 @@ if (process.argv.includes('-q') || process.argv.includes('--quiet')) {
 program
   .name('mxtest')
   .description('Mendix + Playwright Testing CLI')
-  .version('1.0.2');
+  .version('1.0.3');
 
 // Register commands
 program

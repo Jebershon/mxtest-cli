@@ -77,29 +77,19 @@ module.exports = async function build(clientPort, postgresPort, opts = {}) {
         }
         // (No ASCII loader) Stream mxcli output directly to the console while capturing it.
         try {
-            await new Promise((resolve, reject) => {
-                // Use execa argument passing (no shell) so Windows paths with spaces are not split.
-                const child = execa('mxcli', mxcliArgs, { all: true, reject: false });
+            // Use execa argument passing (no shell) so Windows paths with spaces are not split.
+            const child = execa('mxcli', mxcliArgs, { all: true, reject: false });
 
-                child.all.on('data', (d) => { process.stdout.write(d); combined += String(d); });
-                child.on('error', (e) => {
-                    process.stderr.write('\n');
-                    reject(e);
-                });
-                child.then((result) => {
-                    process.stderr.write('\n');
-                    if (result.exitCode === 0) return resolve();
-                    // if code non-zero but output declares success, treat as success
-                    if (combined.includes('BUILD SUCCEEDED') || /BUILD\s+SUCCEEDED/i.test(combined)) return resolve();
-                    const err = new Error('mxcli exited with code ' + result.exitCode);
-                    err.code = result.exitCode;
-                    err.output = combined;
-                    return reject(err);
-                }).catch((e) => {
-                    process.stderr.write('\n');
-                    reject(e);
-                });
-            });
+            child.all.on('data', (d) => { process.stdout.write(d); combined += String(d); });
+
+            const result = await child;
+            process.stderr.write('\n');
+            if (result.exitCode !== 0 && !combined.includes('BUILD SUCCEEDED') && !/BUILD\s+SUCCEEDED/i.test(combined)) {
+                const err = new Error('mxcli exited with code ' + result.exitCode);
+                err.code = result.exitCode;
+                err.output = combined;
+                throw err;
+            }
             const durMs = Date.now() - startTime;
             logger.success('mxcli docker build completed');
             // show a concise tail of the build output so the log feels informative
@@ -190,13 +180,13 @@ module.exports = async function build(clientPort, postgresPort, opts = {}) {
 
         // If caller didn't request to keep the process alive, exit now so the CLI returns control to the shell.
         // When build is invoked programmatically (e.g., from `run-build`) callers should pass `opts.noExit = true`.
-        try {
-            if (!(opts && opts.noExit)) {
-                logger.info('Build completed — exiting mxtest process.');
+        if (!(opts && opts.noExit)) {
+            logger.info('Build completed — exiting mxtest process.');
+            // Force exit after a short timeout to handle any lingering resources
+            setTimeout(() => {
                 process.exit(0);
-            }
-        } catch (e) {
-            // ignore
+            }, 100);
+            process.exit(0);
         }
 
     } catch (err) {
