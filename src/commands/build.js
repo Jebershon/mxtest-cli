@@ -67,29 +67,31 @@ module.exports = async function build(clientPort, postgresPort, opts = {}) {
     // Show a short header and stream mxcli output; capture a tail summary for a friendly post-build summary.
     logger.info('Running mxcli docker build...');
     logger.box('mxcli build — streaming output (tail shown after completion)');
-        const { spawn } = require('child_process');
         let combined = '';
         const startTime = Date.now();
         // (No ASCII loader) Stream mxcli output directly to the console while capturing it.
         try {
             await new Promise((resolve, reject) => {
-                const child = spawn('mxcli', ['docker', 'build', '-p', mpr.file], { shell: true });
+                // Use execa argument passing (no shell) so Windows paths with spaces are not split.
+                const child = execa('mxcli', ['docker', 'build', '-p', mpr.file], { all: true, reject: false });
 
-                child.stdout.on('data', (d) => { process.stdout.write(d); combined += String(d); });
-                child.stderr.on('data', (d) => { process.stderr.write(d); combined += String(d); });
+                child.all.on('data', (d) => { process.stdout.write(d); combined += String(d); });
                 child.on('error', (e) => {
                     process.stderr.write('\n');
                     reject(e);
                 });
-                child.on('close', (code) => {
+                child.then((result) => {
                     process.stderr.write('\n');
-                    if (code === 0) return resolve();
+                    if (result.exitCode === 0) return resolve();
                     // if code non-zero but output declares success, treat as success
                     if (combined.includes('BUILD SUCCEEDED') || /BUILD\s+SUCCEEDED/i.test(combined)) return resolve();
-                    const err = new Error('mxcli exited with code ' + code);
-                    err.code = code;
+                    const err = new Error('mxcli exited with code ' + result.exitCode);
+                    err.code = result.exitCode;
                     err.output = combined;
                     return reject(err);
+                }).catch((e) => {
+                    process.stderr.write('\n');
+                    reject(e);
                 });
             });
             const durMs = Date.now() - startTime;
