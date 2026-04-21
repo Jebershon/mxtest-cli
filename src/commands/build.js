@@ -69,11 +69,17 @@ module.exports = async function build(clientPort, postgresPort, opts = {}) {
     logger.box('mxcli build — streaming output (tail shown after completion)');
         let combined = '';
         const startTime = Date.now();
+        const mxcliArgs = ['docker', 'build', '-p', mpr.file];
+        const mxbuildPath = (opts && opts.mxbuildPath) || (cfg && cfg.mxbuildPath);
+        if (mxbuildPath) {
+            mxcliArgs.push('--mxbuild-path', String(mxbuildPath));
+            logger.info('Using custom mxbuild path: ' + String(mxbuildPath));
+        }
         // (No ASCII loader) Stream mxcli output directly to the console while capturing it.
         try {
             await new Promise((resolve, reject) => {
                 // Use execa argument passing (no shell) so Windows paths with spaces are not split.
-                const child = execa('mxcli', ['docker', 'build', '-p', mpr.file], { all: true, reject: false });
+                const child = execa('mxcli', mxcliArgs, { all: true, reject: false });
 
                 child.all.on('data', (d) => { process.stdout.write(d); combined += String(d); });
                 child.on('error', (e) => {
@@ -107,6 +113,14 @@ module.exports = async function build(clientPort, postgresPort, opts = {}) {
         } catch (err) {
             // print combined output if available to help debugging
             if (err && err.output) logger.error('mxcli output:\n' + String(err.output));
+            const out = String((err && err.output) || combined || '').toLowerCase();
+            if (out.includes("invalid target 'portable-app-package'") || (out.includes('use either') && out.includes('package') && out.includes('deploy'))) {
+                logger.error('Your mxbuild tool is incompatible with mxcli docker build (portable-app-package target unsupported).');
+                logger.info('Fix options:');
+                logger.info('  1) Install a newer mxbuild that supports portable-app-package');
+                logger.info('  2) Run with explicit path: mxtest build --mxbuild-path "<path-to-new-mxbuild>"');
+                logger.info('  3) Persist path in config: mxtest config set mxbuildPath "<path-to-new-mxbuild>"');
+            }
             logger.error(String(err));
             process.exit(1);
         }

@@ -13,7 +13,7 @@ if (process.argv.includes('-q') || process.argv.includes('--quiet')) {
 program
   .name('mxtest')
   .description('Mendix + Playwright Testing CLI')
-  .version('1.0.1');
+  .version('1.0.2');
 
 // Register commands
 program
@@ -30,6 +30,7 @@ program
   .command('build [clientPort] [postgresPort]')
   .description('Build Mendix docker images and prepare docker artifacts (.env, docker-compose)')
   .option('--force', 'Force removal of existing .docker even if snapshot fails')
+  .option('--mxbuild-path <path>', 'Path to mxbuild executable compatible with portable-app-package')
   .action((clientPort, postgresPort, opts) => require('../src/commands/build')(clientPort, postgresPort, opts));
 
 program
@@ -43,6 +44,7 @@ program
   .description('Force rebuild the app, recreate .docker, and run docker compose (down then up)')
   .option('--no-wait', 'Do not wait for the application URL to become available')
   .option('--force', 'Force removal of existing .docker even if snapshot fails')
+  .option('--mxbuild-path <path>', 'Path to mxbuild executable compatible with portable-app-package')
   .action((opts) => require('../src/commands/run-build')(opts));
 
 program

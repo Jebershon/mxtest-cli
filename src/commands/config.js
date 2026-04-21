@@ -1,7 +1,7 @@
 const logger = require('../utils/logger');
 const configManager = require('../utils/configManager');
 
-const ALLOWED = ['testDir', 'appUrl', 'clientPort', 'postgresPort', 'waitTimeout', 'image'];
+const ALLOWED = ['testDir', 'appUrl', 'clientPort', 'postgresPort', 'waitTimeout', 'image', 'mxbuildPath'];
 
 module.exports = async function config(action, key, value) {
   try {
